@@ -7,6 +7,8 @@ Run with NiceGUI frontend:
     python -m backend.main
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -16,11 +18,20 @@ from backend.api.routes_graph import router as graph_router
 from backend.api.routes_community import router as community_router
 from backend.api.routes_surfacing import router as surfacing_router
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize the pipeline on startup."""
+    get_pipeline()
+    yield
+
+
 app = FastAPI(
     title="2ndBrain",
     description="Personal second brain with bi-temporal memory graph",
     version="0.1.0",
     redirect_slashes=False,
+    lifespan=lifespan,
 )
 
 # CORS for local dev (Vite frontend on port 5173)
@@ -37,11 +48,6 @@ app.include_router(query_router)
 app.include_router(graph_router)
 app.include_router(community_router)
 app.include_router(surfacing_router)
-
-
-@app.on_event("startup")
-def startup_event():
-    get_pipeline()
 
 
 @app.get("/")
