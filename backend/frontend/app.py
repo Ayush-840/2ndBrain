@@ -6,6 +6,10 @@ Pages:
   3. Graph — full graph explorer (ECharts)
   4. Query — chat-style interface with point-in-time picker
   5. Digest — daily/weekly resurfacing + audit results
+
+Authentication:
+  All pages are protected. Login page at /login.
+  Credentials configured via BRAIN_AUTH_USERNAME / BRAIN_AUTH_PASSWORD env vars.
 """
 
 from __future__ import annotations
@@ -14,40 +18,119 @@ import json
 
 from nicegui import ui
 
+from backend.frontend.auth import (
+    require_auth,
+    verify_credentials,
+    create_session,
+    set_session_storage,
+    clear_session_storage,
+    logout_current,
+    is_auth_enabled,
+    check_auth_client_storage,
+)
+
 
 def create_frontend(app) -> None:
     """Mount NiceGUI on the FastAPI app and define all pages."""
 
+    @ui.page("/login")
+    def login_page():
+        _login_page()
+
     @ui.page("/")
     def index():
-        _layout("Home", _home_page)
+        session = require_auth()
+        _layout("Home", _home_page, session)
 
     @ui.page("/inbox")
     def inbox():
-        _layout("Inbox", _inbox_page)
+        session = require_auth()
+        _layout("Inbox", _inbox_page, session)
 
     @ui.page("/wiki")
     def wiki():
-        _layout("Wiki", _wiki_page)
+        session = require_auth()
+        _layout("Wiki", _wiki_page, session)
 
     @ui.page("/graph")
     def graph():
-        _layout("Graph Explorer", _graph_page)
+        session = require_auth()
+        _layout("Graph Explorer", _graph_page, session)
 
     @ui.page("/query")
     def query():
-        _layout("Query", _query_page)
+        session = require_auth()
+        _layout("Query", _query_page, session)
 
     @ui.page("/digest")
     def digest():
-        _layout("Digest", _digest_page)
+        session = require_auth()
+        _layout("Digest", _digest_page, session)
 
     # Mount NiceGUI on the FastAPI app
     ui.run_with(app, mount_path="/ui", title="2ndBrain")
 
 
-def _layout(title: str, content_func) -> None:
-    """Shared layout with navigation sidebar."""
+# ── Login page ───────────────────────────────────────────────────────
+
+def _login_page():
+    """Login form page."""
+    with ui.column().classes(
+        "w-full h-screen items-center justify-center bg-gray-50"
+    ):
+        with ui.card().classes("w-96 p-8"):
+            ui.label("🧠 2ndBrain").classes("text-2xl font-bold text-center mb-2")
+            ui.label("Sign in to your second brain").classes(
+                "text-gray-500 text-center mb-6"
+            )
+
+            username = ui.input(
+                label="Username",
+                placeholder="admin",
+            ).classes("w-full mb-3")
+
+            password = ui.input(
+                label="Password",
+                password=True,
+                placeholder="••••••••",
+            ).classes("w-full mb-4")
+
+            error_label = ui.label("").classes("text-red-500 text-sm mb-2 hidden")
+
+            async def do_login():
+                if not username.value or not password.value:
+                    error_label.text = "Please enter username and password"
+                    error_label.classes(remove="hidden")
+                    return
+
+                if verify_credentials(username.value, password.value):
+                    token = create_session(username.value)
+                    set_session_storage(token)
+                    # Redirect to the page they were trying to access
+                    next_url = "/"
+                    try:
+                        req_path = ui.context.client.environ.get("asgi.scope", {}).get("path", "/")
+                        qs = ui.context.client.environ.get("asgi.scope", {}).get("query_string", b"")
+                        if isinstance(qs, bytes):
+                            qs = qs.decode()
+                        if "next=" in qs:
+                            next_url = qs.split("next=")[1].split("&")[0]
+                    except Exception:
+                        pass
+                    ui.navigate.to(next_url)
+                else:
+                    error_label.text = "Invalid username or password"
+                    error_label.classes(remove="hidden")
+
+            ui.button("Sign In", on_click=do_login).classes(
+                "w-full bg-blue-500 text-white"
+            ).on("keydown.enter", do_login)
+
+
+# ── Layout ───────────────────────────────────────────────────────────
+
+def _layout(title: str, content_func, session=None) -> None:
+    """Shared layout with navigation sidebar and user info."""
     with ui.column().classes("w-full h-screen"):
         # Top navigation bar
         with ui.row().classes("w-full items-center bg-gray-900 text-white px-4 py-2"):
@@ -58,6 +141,19 @@ def _layout(title: str, content_func) -> None:
             ui.link("Graph", "/graph").classes("text-gray-300 hover:text-white mr-4")
             ui.link("Query", "/query").classes("text-gray-300 hover:text-white mr-4")
             ui.link("Digest", "/digest").classes("text-gray-300 hover:text-white mr-4")
+
+            # Spacer + user info + logout
+            ui.space()
+            if session and session.user:
+                ui.label(f"👤 {session.user}").classes("text-gray-400 text-sm mr-3")
+
+            def _do_logout():
+                logout_current()
+                ui.navigate.to("/login")
+
+            ui.button("Logout", on_click=_do_logout).classes(
+                "text-gray-300 hover:text-white text-sm"
+            ).props("flat dense")
 
         # Page content
         with ui.column().classes("w-full p-6 overflow-auto flex-1"):
@@ -74,26 +170,25 @@ def _home_page():
     ).classes("text-gray-600 mb-6")
 
     with ui.row().classes("gap-4"):
-        ui.card().classes("p-4 w-48").on("click", lambda: ui.navigate.to("/inbox"))(
-            ui.label("📥 Inbox").classes("text-lg font-bold"),
-            ui.label("Ingest notes & files").classes("text-sm text-gray-500"),
-        )
-        ui.card().classes("p-4 w-48").on("click", lambda: ui.navigate.to("/wiki"))(
-            ui.label("📚 Wiki").classes("text-lg font-bold"),
-            ui.label("Browse articles").classes("text-sm text-gray-500"),
-        )
-        ui.card().classes("p-4 w-48").on("click", lambda: ui.navigate.to("/graph"))(
-            ui.label("🕸️ Graph").classes("text-lg font-bold"),
-            ui.label("Explore knowledge graph").classes("text-sm text-gray-500"),
-        )
-        ui.card().classes("p-4 w-48").on("click", lambda: ui.navigate.to("/query"))(
-            ui.label("🔍 Query").classes("text-lg font-bold"),
-            ui.label("Ask your second brain").classes("text-sm text-gray-500"),
-        )
-        ui.card().classes("p-4 w-48").on("click", lambda: ui.navigate.to("/digest"))(
-            ui.label("📊 Digest").classes("text-lg font-bold"),
-            ui.label("Activity & contradictions").classes("text-sm text-gray-500"),
-        )
+        with ui.card().classes("p-4 w-48 cursor-pointer").on("click", lambda: ui.navigate.to("/inbox")):
+            ui.label("📥 Inbox").classes("text-lg font-bold")
+            ui.label("Ingest notes & files").classes("text-sm text-gray-500")
+
+        with ui.card().classes("p-4 w-48 cursor-pointer").on("click", lambda: ui.navigate.to("/wiki")):
+            ui.label("📚 Wiki").classes("text-lg font-bold")
+            ui.label("Browse articles").classes("text-sm text-gray-500")
+
+        with ui.card().classes("p-4 w-48 cursor-pointer").on("click", lambda: ui.navigate.to("/graph")):
+            ui.label("🕸️ Graph").classes("text-lg font-bold")
+            ui.label("Explore knowledge graph").classes("text-sm text-gray-500")
+
+        with ui.card().classes("p-4 w-48 cursor-pointer").on("click", lambda: ui.navigate.to("/query")):
+            ui.label("🔍 Query").classes("text-lg font-bold")
+            ui.label("Ask your second brain").classes("text-sm text-gray-500")
+
+        with ui.card().classes("p-4 w-48 cursor-pointer").on("click", lambda: ui.navigate.to("/digest")):
+            ui.label("📊 Digest").classes("text-lg font-bold")
+            ui.label("Activity & contradictions").classes("text-sm text-gray-500")
 
 
 def _inbox_page():
