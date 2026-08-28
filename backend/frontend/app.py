@@ -22,11 +22,10 @@ from backend.frontend.auth import (
     require_auth,
     verify_credentials,
     create_session,
-    set_session_storage,
-    clear_session_storage,
+    set_session_cookie,
+    clear_session_cookie,
     logout_current,
     is_auth_enabled,
-    check_auth_client_storage,
 )
 
 
@@ -105,7 +104,7 @@ def _login_page():
 
                 if verify_credentials(username.value, password.value):
                     token = create_session(username.value)
-                    set_session_storage(token)
+                    set_session_cookie(token)
                     # Redirect to the page they were trying to access
                     next_url = "/"
                     try:
