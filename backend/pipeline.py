@@ -22,6 +22,7 @@ from backend.enrichment.extractor import (
 from backend.ingestion.base import Capture, IngestionAdapter
 from backend.ingestion.markdown import MarkdownAdapter
 from backend.ingestion.pdf import PDFAdapter
+from backend.ingestion.url_adapter import URLAdapter
 from backend.memory.episodic import EpisodicStore
 from backend.memory.graph import TemporalGraph
 from backend.memory.community import CommunityStore, cluster_facts, summarize_clusters
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 ADAPTERS: dict[str, type[IngestionAdapter]] = {
     "markdown": MarkdownAdapter,
     "pdf": PDFAdapter,
+    "url": URLAdapter,
 }
 
 
@@ -174,15 +176,20 @@ class Pipeline:
         max_clusters: int = 10,
         summarize: bool = True,
     ) -> dict:
-        """Cluster semantic facts into topic communities.
+        """Cluster facts (or episodic chunks) into topic communities.
 
-        This is the community memory tier: groups related facts together
-        and generates summaries for topic-level retrieval.
+        If the knowledge graph has facts, clusters those. Otherwise,
+        falls back to clustering episodic chunks by embedding similarity.
         """
+        # Try graph facts first
         clusters = cluster_facts(
             self.graph,
             max_clusters=max_clusters,
         )
+
+        # Fallback: cluster episodic chunks if graph is empty
+        if not clusters:
+            clusters = self._cluster_episodic_chunks(max_clusters=max_clusters)
 
         if summarize:
             clusters = summarize_clusters(clusters, self.graph)
@@ -198,6 +205,85 @@ class Pipeline:
             "cluster_labels": [c.label for c in clusters],
             "graph_stats": self.graph.stats(),
         }
+
+    def _cluster_episodic_chunks(
+        self,
+        max_clusters: int = 10,
+        min_cluster_size: int = 2,
+    ) -> list:
+        """Cluster episodic chunks by embedding similarity.
+
+        Used as a fallback when the knowledge graph has no facts yet.
+        """
+        from backend.memory.community import TopicCluster
+        import numpy as np
+
+        # Fetch all chunks from ChromaDB
+        results = self.store._collection.get(include=["documents", "metadatas"])
+        if not results["ids"]:
+            return []
+
+        ids = results["ids"]
+        docs = results["documents"]
+        metadatas = results["metadatas"] or [{}] * len(ids)
+
+        # Group by source_path to create per-document clusters
+        sources: dict[str, list[int]] = {}
+        for i, meta in enumerate(metadatas):
+            src = meta.get("source_path", "unknown") if meta else "unknown"
+            sources.setdefault(src, []).append(i)
+
+        # Build clusters from source groups
+        clusters = []
+        for src, indices in sources.items():
+            if len(indices) < min_cluster_size:
+                # Merge small groups into a catch-all cluster
+                continue
+
+            # Use the first heading or first line as label
+            first_text = docs[indices[0]].strip()
+            label = "Untitled"
+            for line in first_text.split("\n"):
+                line = line.strip()
+                if line.startswith("#"):
+                    label = line.lstrip("# ").strip()
+                    break
+                elif line and len(line) > 5:
+                    label = line[:80]
+                    break
+
+            # Build summary from all chunks in this source
+            summaries = []
+            for idx in indices:
+                text = docs[idx].strip()
+                if text:
+                    summaries.append(text[:200])
+            summary = "\n\n".join(summaries[:3])
+            if len(summaries) > 3:
+                summary += f"\n\n(+ {len(summaries) - 3} more sections)"
+
+            cluster = TopicCluster(
+                cluster_id=f"episodic-{src.replace('/', '_').replace('.', '_')}",
+                label=label,
+                summary=summary,
+                fact_ids=[ids[i] for i in indices],
+                entity_ids=[],
+            )
+            clusters.append(cluster)
+
+        # If no cluster met min_cluster_size, create one big cluster
+        if not clusters and ids:
+            all_text = "\n\n".join(docs[:5])
+            cluster = TopicCluster(
+                cluster_id="episodic-all",
+                label="All Ingested Content",
+                summary=all_text[:500],
+                fact_ids=ids,
+                entity_ids=[],
+            )
+            clusters = [cluster]
+
+        return clusters[:max_clusters]
 
     def _process_capture(
         self,

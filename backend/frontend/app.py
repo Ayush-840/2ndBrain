@@ -269,8 +269,8 @@ def _wiki_page():
             resp = await client.get("http://localhost:8000/community/clusters")
             if resp.status_code == 200:
                 data = resp.json()
+                clusters_container.clear()
                 with clusters_container:
-                    ui.clear()
                     if data["total"] == 0:
                         ui.label("No topic clusters yet. Build communities from the Graph page.").classes(
                             "text-gray-500"
@@ -390,8 +390,8 @@ def _query_page():
                 )
                 if resp.status_code == 200:
                     data = resp.json()
+                    results_container.clear()
                     with results_container:
-                        ui.clear()
                         ui.label(f"Found {data['total']} results from: {', '.join(data['sources_used'])}").classes(
                             "text-sm text-gray-500 mb-2"
                         )
@@ -431,8 +431,8 @@ def _digest_page():
             )
             if resp.status_code == 200:
                 data = resp.json()
+                digest_container.clear()
                 with digest_container:
-                    ui.clear()
                     with ui.card().classes("w-full max-w-3xl p-6"):
                         ui.label(data["summary"]).classes("font-bold text-lg mb-4")
                         for entry in data["entries"]:
@@ -452,8 +452,8 @@ def _digest_page():
             )
             if resp.status_code == 200:
                 data = resp.json()
+                digest_container.clear()
                 with digest_container:
-                    ui.clear()
                     ui.label(f"Found {data['total']} contradictions").classes(
                         "font-bold text-lg mb-4"
                     )

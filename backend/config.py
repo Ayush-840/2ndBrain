@@ -40,5 +40,12 @@ class Settings(BaseSettings):
     # --- ChromaDB ---
     chroma_collection: str = "episodic_memory"
 
+    # --- Auth ---
+    auth_enabled: bool = False
+    auth_username: str = "admin"
+    auth_password: str = "changeme"
+    # Optional: pre-hashed password (bcrypt/sha256). If set, auth_password is ignored.
+    auth_password_hash: str = ""
+
 
 settings = Settings()
