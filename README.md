@@ -139,14 +139,15 @@ second-brain/
 │   │   ├── runner.py        # Eval execution engine
 │   │   └── scorer.py        # Automated scoring + aggregation
 │   ├── frontend/
-│   │   └── app.py           # NiceGUI pages (Inbox, Wiki, Graph, Query, Digest)
+│   │   ├── app.py           # NiceGUI pages (Inbox, Wiki, Graph, Query, Digest)
+│   │   └── auth.py          # Session-based authentication
 │   └── api/
 │       ├── routes_ingest.py     # POST /ingest, /ingest/file, /ingest/url
 │       ├── routes_query.py      # POST /query
 │       ├── routes_graph.py      # POST /graph/query-as-of, /graph/entity, /graph/export
 │       ├── routes_community.py  # POST /community/build, GET /community/clusters
 │       └── routes_surfacing.py  # POST /surfing/contradictions, /surfing/digest
-├── tests/                   # 145+ unit & integration tests (pytest)
+├── tests/                   # 190+ unit & integration tests (pytest)
 ├── data/
 │   ├── sample_vault/        # Sample Obsidian notes for testing
 │   └── eval_results.json    # Latest eval results
@@ -228,6 +229,33 @@ The NiceGUI frontend is mounted at `/ui` on the FastAPI server. Pages:
 - **Query** (`/ui/query`) — Chat-style interface with point-in-time date picker
 - **Digest** (`/ui/digest`) — Daily/weekly digests, contradiction reports
 
+## Authentication
+
+The NiceGUI frontend is protected by session-based authentication. All pages require login.
+
+**Default credentials:** `admin` / `changeme`
+
+Configure via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BRAIN_AUTH_ENABLED` | `true` | Enable/disable auth (set `false` for local dev) |
+| `BRAIN_AUTH_USERNAME` | `admin` | Login username |
+| `BRAIN_AUTH_PASSWORD` | `changeme` | Login password |
+| `BRAIN_AUTH_PASSWORD_HASH` | — | Pre-hashed password (SHA-256, overrides password) |
+
+**How it works:**
+- Sessions are stored server-side in memory (7-day expiry, 24h idle timeout)
+- Session tokens are stored in browser cookies + NiceGUI client storage
+- Passwords are hashed with SHA-256 (use `BRAIN_AUTH_PASSWORD_HASH` for production)
+- The `/login` page redirects back to the original page after auth
+- API endpoints are **not** protected (use a reverse proxy for API auth in production)
+
+**To disable auth for local development:**
+```bash
+export BRAIN_AUTH_ENABLED=false
+```
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -240,6 +268,9 @@ The NiceGUI frontend is mounted at `/ui` on the FastAPI server. Pages:
 | `BRAIN_ANTHROPIC_API_KEY` | — | Claude API key (extraction) |
 | `BRAIN_GRAPH_WEIGHT` | `0.2` | Weight for graph results in RRF fusion |
 | `BRAIN_GRAPH_HOPS` | `2` | Hops to traverse in graph retrieval |
+| `BRAIN_AUTH_ENABLED` | `true` | Enable frontend authentication |
+| `BRAIN_AUTH_USERNAME` | `admin` | Frontend login username |
+| `BRAIN_AUTH_PASSWORD` | `changeme` | Frontend login password |
 
 ## Design Decisions
 

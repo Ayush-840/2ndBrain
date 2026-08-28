@@ -82,23 +82,49 @@ async def ingest_uploaded_file(
 class URLIngestRequest(BaseModel):
     url: str
     text: str | None = None  # Optional selected text (browser clip)
+    title: str | None = None  # Optional page title
 
 
 @router.post("/url", response_model=IngestResponse)
 def ingest_url(req: URLIngestRequest):
-    """Ingest a URL or browser clip (URL + selected text)."""
-    from backend.ingestion.base import Capture
+    """Ingest a URL or browser clip (URL + selected text).
 
-    content = req.text or f"[URL: {req.url}]"
-    capture = Capture(
-        content=content,
-        source_path=req.url,
-        source_type="url",
-        metadata={"url": req.url},
-    )
-
+    Modes:
+      - With text: browser clip mode — uses the provided text directly
+      - Without text: fetch mode — fetches the URL and extracts readable content
+    """
     pipeline = get_pipeline()
-    result = pipeline.ingest_capture(capture)
+
+    if req.text:
+        # Browser clip mode: use provided text directly
+        from backend.ingestion.url_adapter import URLAdapter
+        adapter = URLAdapter()
+        capture = adapter.ingest_clip(
+            url=req.url,
+            selected_text=req.text,
+            title=req.title or "",
+        )
+        result = pipeline.ingest_capture(capture)
+        result["num_captures"] = 1
+    else:
+        # Fetch mode: fetch URL and extract content
+        from backend.ingestion.url_adapter import URLAdapter
+        adapter = URLAdapter()
+        try:
+            captures = adapter.ingest(req.url)
+            result = {
+                "num_captures": 0,
+                "num_chunks": 0,
+                "doc_ids": [],
+            }
+            for capture in captures:
+                r = pipeline.ingest_capture(capture)
+                result["num_captures"] += 1
+                result["num_chunks"] += r["num_chunks"]
+                result["doc_ids"].extend(r["doc_ids"])
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Failed to fetch URL: {e}")
+
     return IngestResponse(**result)
 
 

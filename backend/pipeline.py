@@ -262,24 +262,36 @@ class Pipeline:
             if len(summaries) > 3:
                 summary += f"\n\n(+ {len(summaries) - 3} more sections)"
 
+            # Compute centroid embedding for search
+            chunk_texts = [docs[i].strip() for i in indices if docs[i].strip()]
+            if chunk_texts:
+                chunk_embs = embed_texts(chunk_texts[:5])  # limit for speed
+                centroid = np.mean(chunk_embs, axis=0).tolist()
+            else:
+                centroid = []
+
             cluster = TopicCluster(
                 cluster_id=f"episodic-{src.replace('/', '_').replace('.', '_')}",
                 label=label,
                 summary=summary,
                 fact_ids=[ids[i] for i in indices],
                 entity_ids=[],
+                centroid_embedding=centroid,
             )
             clusters.append(cluster)
 
         # If no cluster met min_cluster_size, create one big cluster
         if not clusters and ids:
             all_text = "\n\n".join(docs[:5])
+            chunk_texts = [d.strip() for d in docs[:5] if d.strip()]
+            centroid = np.mean(embed_texts(chunk_texts), axis=0).tolist() if chunk_texts else []
             cluster = TopicCluster(
                 cluster_id="episodic-all",
                 label="All Ingested Content",
                 summary=all_text[:500],
                 fact_ids=ids,
                 entity_ids=[],
+                centroid_embedding=centroid,
             )
             clusters = [cluster]
 
