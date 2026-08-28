@@ -24,6 +24,7 @@ from backend.ingestion.markdown import MarkdownAdapter
 from backend.ingestion.pdf import PDFAdapter
 from backend.memory.episodic import EpisodicStore
 from backend.memory.graph import TemporalGraph
+from backend.memory.community import CommunityStore, cluster_facts, summarize_clusters
 from backend.retrieval.bm25 import BM25Index
 
 logger = logging.getLogger(__name__)
@@ -49,11 +50,13 @@ class Pipeline:
         episodic_store: EpisodicStore | None = None,
         bm25_index: BM25Index | None = None,
         graph: TemporalGraph | None = None,
+        community: CommunityStore | None = None,
         extractor: FactExtractor | None = None,
     ):
         self.store = episodic_store or EpisodicStore()
         self.bm25 = bm25_index or BM25Index()
         self.graph = graph or TemporalGraph()
+        self.community = community or CommunityStore()
         self._extractor = extractor  # lazy init — only when needed
 
     @property
@@ -163,6 +166,36 @@ class Pipeline:
             "entities_added": entities_added,
             "facts_added": facts_added,
             "contradictions_found": contradictions_found,
+            "graph_stats": self.graph.stats(),
+        }
+
+    def build_communities(
+        self,
+        max_clusters: int = 10,
+        summarize: bool = True,
+    ) -> dict:
+        """Cluster semantic facts into topic communities.
+
+        This is the community memory tier: groups related facts together
+        and generates summaries for topic-level retrieval.
+        """
+        clusters = cluster_facts(
+            self.graph,
+            max_clusters=max_clusters,
+        )
+
+        if summarize:
+            clusters = summarize_clusters(clusters, self.graph)
+
+        # Store clusters
+        self.community = CommunityStore()
+        for cluster in clusters:
+            self.community.add_cluster(cluster)
+
+        return {
+            "num_clusters": len(clusters),
+            "total_facts_in_clusters": self.community.total_facts_in_clusters,
+            "cluster_labels": [c.label for c in clusters],
             "graph_stats": self.graph.stats(),
         }
 

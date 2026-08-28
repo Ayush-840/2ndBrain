@@ -29,7 +29,10 @@ dependencies = [
     "anthropic>=0.34.0",
 
     # Scheduler (Phase 5)
-    # "apscheduler>=3.10",
+    "apscheduler>=3.10",
+
+    # Frontend
+    "nicegui>=1.4.0",
 
     # Utilities
     "python-multipart>=0.0.9",

@@ -47,8 +47,8 @@ When a new fact arrives that conflicts with an existing one, the old fact's `val
 **Phase 1** ✅: Episodic store + hybrid retrieval
 **Phase 2** ✅: Bi-temporal knowledge graph + Claude extraction
 **Phase 3** ✅: 3-way retrieval fusion (dense + BM25 + graph traversal)
-**Phase 4** (next): Eval harness with golden query set
-**Phase 5**: Surfacing agent (contradiction detection, resurfacing, digests)
+**Phase 4** ✅: Eval harness with golden query set (86.4% accuracy)
+**Phase 5** ✅: Surfacing agent + community memory + NiceGUI frontend
 
 ## Tech Stack
 
@@ -60,7 +60,8 @@ When a new fact arrives that conflicts with an existing one, the old fact's `val
 | Lexical search | BM25Okapi (rank_bm25) |
 | Graph | NetworkX (swappable to Neo4j) |
 | LLM | Claude API (tool calling for extraction) |
-| Frontend | React + Vite + Tailwind (Phase 5) |
+| Frontend | NiceGUI (pure Python, mounted on FastAPI) |
+| Scheduler | APScheduler (daily/weekly surfacing jobs) |
 
 ## Quick Start
 
@@ -68,7 +69,10 @@ When a new fact arrives that conflicts with an existing one, the old fact's `val
 # Install
 pip install -e ".[dev]"
 
-# Run the API
+# Run with NiceGUI frontend (recommended)
+python -m backend.main
+
+# Or run API-only
 uvicorn backend.main:app --reload
 
 # Ingest your vault (episodic store only)
@@ -90,6 +94,17 @@ curl -X POST http://localhost:8000/query \
 curl -X POST http://localhost:8000/graph/query-as-of \
   -H "Content-Type: application/json" \
   -d '{"date": "2026-05-01", "predicate": "believes"}'
+
+# Build topic communities
+curl -X POST http://localhost:8000/community/build
+
+# Generate a daily digest
+curl -X POST http://localhost:8000/surfing/digest \
+  -H "Content-Type: application/json" \
+  -d '{"digest_type": "daily"}'
+
+# Detect contradictions
+curl -X POST http://localhost:8000/surfing/contradictions
 ```
 
 ## Project Structure
@@ -97,38 +112,121 @@ curl -X POST http://localhost:8000/graph/query-as-of \
 ```
 second-brain/
 ├── backend/
-│   ├── main.py              # FastAPI entry point
+│   ├── main.py              # FastAPI + NiceGUI entry point
 │   ├── config.py            # Pydantic settings (env-driven)
-│   ├── pipeline.py          # Orchestrator: ingest → chunk → embed → store
+│   ├── pipeline.py          # Orchestrator: ingest → chunk → embed → store → community
 │   ├── ingestion/
 │   │   ├── base.py          # Abstract IngestionAdapter + Capture dataclass
 │   │   ├── markdown.py      # Obsidian-compatible .md adapter
 │   │   └── pdf.py           # PyMuPDF-based PDF adapter
 │   ├── enrichment/
 │   │   ├── chunker.py       # Overlap-based text chunking
-│   │   └── embedder.py      # sentence-transformers wrapper
+│   │   ├── embedder.py      # sentence-transformers wrapper
+│   │   └── extractor.py     # Claude tool-calling fact extraction
 │   ├── memory/
 │   │   ├── episodic.py      # ChromaDB episodic store
-│   │   └── graph.py         # NetworkX bi-temporal graph
+│   │   ├── graph.py         # NetworkX bi-temporal graph
+│   │   └── community.py     # Topic clustering + LLM summarization
 │   ├── retrieval/
 │   │   ├── bm25.py          # BM25Okapi lexical search
 │   │   ├── hybrid.py        # Dense + BM25 + Graph fusion (3-way RRF)
 │   │   └── graph_retrieval.py  # Graph-aware entity extraction + traversal
+│   ├── surfacing/
+│   │   ├── agent.py         # Contradiction detection, resurfacing, digests
+│   │   └── scheduler.py     # APScheduler integration
+│   ├── eval/
+│   │   ├── golden_set.py    # 15 golden queries across 4 types
+│   │   ├── runner.py        # Eval execution engine
+│   │   └── scorer.py        # Automated scoring + aggregation
+│   ├── frontend/
+│   │   └── app.py           # NiceGUI pages (Inbox, Wiki, Graph, Query, Digest)
 │   └── api/
-│       ├── routes_ingest.py # POST /ingest, /ingest/file, /ingest/url
-│       ├── routes_query.py  # POST /query
-│       └── routes_graph.py  # POST /graph/query-as-of, /graph/entity, /graph/extract
-├── tests/                   # Unit tests (pytest)
+│       ├── routes_ingest.py     # POST /ingest, /ingest/file, /ingest/url
+│       ├── routes_query.py      # POST /query
+│       ├── routes_graph.py      # POST /graph/query-as-of, /graph/entity, /graph/export
+│       ├── routes_community.py  # POST /community/build, GET /community/clusters
+│       └── routes_surfacing.py  # POST /surfing/contradictions, /surfing/digest
+├── tests/                   # 145+ unit & integration tests (pytest)
 ├── data/
-│   └── sample_vault/        # Sample Obsidian notes for testing
+│   ├── sample_vault/        # Sample Obsidian notes for testing
+│   └── eval_results.json    # Latest eval results
+├── second-brain/            # Wiki content (cross-linked articles)
 └── pyproject.toml
 ```
 
 ## Running Tests
 
 ```bash
+# All fast tests (~11s)
+pytest tests/ -v --ignore=tests/test_hybrid_3way.py --ignore=tests/test_pipeline_graph.py
+
+# Full suite (includes model loading)
 pytest tests/ -v
 ```
+
+## Evaluation Results
+
+The eval harness tests 15 golden queries across 4 types:
+
+| Query Type | Accuracy | Count |
+|-----------|----------|-------|
+| Single-hop | 100% | 4 |
+| Multi-hop | 65.3% | 3 |
+| Point-in-time | 75% | 4 |
+| Contradiction | 100% | 2 |
+| Episodic | 100% | 2 |
+| **Overall** | **86.4%** | **15** |
+
+Run the eval:
+```bash
+python -c "from backend.eval.runner import run_eval, EvalConfig; run_eval(EvalConfig(), verbose=True)"
+```
+
+## Three-Tier Memory Model
+
+### Episodic Memory (ChromaDB)
+Raw captures — immutable, timestamped, vector-indexed. Every note, PDF page, or web clip becomes an episodic chunk with dense embeddings for semantic search.
+
+### Semantic Memory (NetworkX Bi-Temporal Graph)
+Entities + facts + relations, each with bi-temporal validity windows. New facts supersede old ones without deleting history. Enables point-in-time queries and contradiction detection.
+
+### Community Memory (Topic Clusters)
+Facts are clustered by embedding similarity into topic groups, each with an LLM-generated summary. Enables topic-level queries and digest generation.
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/ingest` | Ingest a local file/directory |
+| POST | `/ingest/file` | Ingest an uploaded file |
+| POST | `/ingest/url` | Ingest a URL/browser clip |
+| POST | `/query` | Hybrid search (dense + BM25 + graph) |
+| POST | `/graph/query-as-of` | Facts valid as of a date |
+| POST | `/graph/entity` | Entity neighborhood traversal |
+| POST | `/graph/contradictions` | Find contradictions |
+| POST | `/graph/extract` | On-demand LLM extraction |
+| GET | `/graph/export` | Cytoscape.js graph export |
+| GET | `/graph/stats` | Graph statistics |
+| GET | `/graph/entities` | List all entities |
+| POST | `/community/build` | Cluster facts into topics |
+| GET | `/community/clusters` | List topic clusters |
+| POST | `/community/search` | Search clusters by query |
+| POST | `/surfing/contradictions` | Detect contradictions |
+| POST | `/surfing/resurface` | Resurface stale notes |
+| POST | `/surfing/digest` | Generate digest report |
+| POST | `/surfing/run-daily` | Trigger daily job manually |
+| GET | `/surfing/scheduler` | Scheduler status |
+
+## Frontend (NiceGUI)
+
+The NiceGUI frontend is mounted at `/ui` on the FastAPI server. Pages:
+
+- **Home** (`/ui/`) — Dashboard with quick links
+- **Inbox** (`/ui/ingest`) — Ingest files, view storage stats
+- **Wiki** (`/ui/wiki`) — Browse topic clusters and summaries
+- **Graph** (`/ui/graph`) — Interactive ECharts graph explorer with filters
+- **Query** (`/ui/query`) — Chat-style interface with point-in-time date picker
+- **Digest** (`/ui/digest`) — Daily/weekly digests, contradiction reports
 
 ## Environment Variables
 
@@ -153,21 +251,9 @@ pytest tests/ -v
 - **Claude tool calling** for extraction — structured output, no regex parsing
 - **Bi-temporal superseding** — new facts close old ones without deleting history
 - **RRF for fusion** — the same approach from the Knowledge RAG project, proven to work
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/ingest` | Ingest a local file/directory |
-| POST | `/ingest/file` | Ingest an uploaded file |
-| POST | `/ingest/url` | Ingest a URL/browser clip |
-| POST | `/query` | Hybrid search (dense + BM25) |
-| POST | `/graph/query-as-of` | Facts valid as of a date |
-| POST | `/graph/entity` | Entity neighborhood traversal |
-| POST | `/graph/contradictions` | Find contradictions |
-| POST | `/graph/extract` | On-demand LLM extraction |
-| GET | `/graph/stats` | Graph statistics |
-| GET | `/graph/entities` | List all entities |
+- **Three-tier memory** — episodic (raw), semantic (facts), community (topics) mirrors human memory
+- **NiceGUI over React** — pure Python, no JS build pipeline, runs on the same server
+- **APScheduler for surfacing** — simple cron jobs, no Celery/Redis complexity
 
 ## License
 

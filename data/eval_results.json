@@ -1,0 +1,468 @@
+{
+  "timestamp": "2026-08-28T11:42:49.264120+00:00",
+  "total_queries": 15,
+  "avg_overall": 0.8638888888888889,
+  "avg_by_type": {
+    "single_hop": 1.0,
+    "multi_hop": 0.6527777777777778,
+    "point_in_time": 0.75,
+    "contradiction": 1.0,
+    "episodic": 1.0
+  },
+  "avg_by_difficulty": {
+    "easy": 0.8571428571428571,
+    "medium": 0.8263888888888888,
+    "hard": 1.0
+  },
+  "pass_rate": 0.8666666666666667,
+  "summary": "Eval run: 15 queries\nOverall accuracy: 86.4%\nPass rate (\u22650.5): 86.7%\n\nBy query type:\n  contradiction: 100.0% (2 queries)\n  episodic: 100.0% (2 queries)\n  multi_hop: 65.3% (3 queries)\n  point_in_time: 75.0% (4 queries)\n  single_hop: 100.0% (4 queries)\n\nBy difficulty:\n  easy: 85.7% (7 queries)\n  hard: 100.0% (2 queries)\n  medium: 82.6% (6 queries)",
+  "query_scores": [
+    {
+      "query": "What tools does Ayush use?",
+      "query_type": "single_hop",
+      "difficulty": "easy",
+      "overall": 1.0,
+      "entity_recall": 1.0,
+      "predicate_recall": 1.0,
+      "answer_relevance": 1.0,
+      "temporal_accuracy": 1.0,
+      "expected_entities": [
+        "user"
+      ],
+      "found_entities": [
+        "user"
+      ],
+      "expected_predicates": [
+        "uses"
+      ],
+      "found_predicates": [
+        "uses"
+      ],
+      "expected_answer_contains": [
+        "networkx",
+        "chromadb",
+        "fastapi",
+        "claude"
+      ],
+      "answer_matches": [
+        "networkx",
+        "chromadb",
+        "fastapi",
+        "claude"
+      ],
+      "answer_misses": []
+    },
+    {
+      "query": "What does the Second Brain project implement?",
+      "query_type": "single_hop",
+      "difficulty": "easy",
+      "overall": 1.0,
+      "entity_recall": 1.0,
+      "predicate_recall": 1.0,
+      "answer_relevance": 1.0,
+      "temporal_accuracy": 1.0,
+      "expected_entities": [
+        "second_brain"
+      ],
+      "found_entities": [
+        "second_brain"
+      ],
+      "expected_predicates": [
+        "implements"
+      ],
+      "found_predicates": [
+        "implements"
+      ],
+      "expected_answer_contains": [
+        "bi-temporal"
+      ],
+      "answer_matches": [
+        "bi-temporal"
+      ],
+      "answer_misses": []
+    },
+    {
+      "query": "What technology does RAG use for lexical search?",
+      "query_type": "single_hop",
+      "difficulty": "easy",
+      "overall": 1.0,
+      "entity_recall": 1.0,
+      "predicate_recall": 1.0,
+      "answer_relevance": 1.0,
+      "temporal_accuracy": 1.0,
+      "expected_entities": [
+        "rag"
+      ],
+      "found_entities": [
+        "rag"
+      ],
+      "expected_predicates": [
+        "uses"
+      ],
+      "found_predicates": [
+        "uses"
+      ],
+      "expected_answer_contains": [
+        "bm25"
+      ],
+      "answer_matches": [
+        "bm25"
+      ],
+      "answer_misses": []
+    },
+    {
+      "query": "What is Graph RAG built on top of?",
+      "query_type": "single_hop",
+      "difficulty": "easy",
+      "overall": 1.0,
+      "entity_recall": 1.0,
+      "predicate_recall": 1.0,
+      "answer_relevance": 1.0,
+      "temporal_accuracy": 1.0,
+      "expected_entities": [
+        "graph_rag"
+      ],
+      "found_entities": [
+        "graph_rag"
+      ],
+      "expected_predicates": [
+        "extends"
+      ],
+      "found_predicates": [
+        "extends"
+      ],
+      "expected_answer_contains": [
+        "rag"
+      ],
+      "answer_matches": [
+        "rag"
+      ],
+      "answer_misses": []
+    },
+    {
+      "query": "What tools are used in the technologies that RAG combines with?",
+      "query_type": "multi_hop",
+      "difficulty": "medium",
+      "overall": 0.75,
+      "entity_recall": 1.0,
+      "predicate_recall": 1.0,
+      "answer_relevance": 0.5,
+      "temporal_accuracy": 1.0,
+      "expected_entities": [
+        "rag",
+        "hybrid_retrieval"
+      ],
+      "found_entities": [
+        "rag",
+        "hybrid_retrieval"
+      ],
+      "expected_predicates": [
+        "combines",
+        "uses"
+      ],
+      "found_predicates": [
+        "combines",
+        "uses"
+      ],
+      "expected_answer_contains": [
+        "bm25",
+        "sentence_transformers"
+      ],
+      "answer_matches": [
+        "bm25"
+      ],
+      "answer_misses": [
+        "sentence_transformers"
+      ]
+    },
+    {
+      "query": "What does Ayush's project use that extends RAG?",
+      "query_type": "multi_hop",
+      "difficulty": "medium",
+      "overall": 0.20833333333333331,
+      "entity_recall": 0.3333333333333333,
+      "predicate_recall": 0.5,
+      "answer_relevance": 0.0,
+      "temporal_accuracy": 1.0,
+      "expected_entities": [
+        "second_brain",
+        "graph_rag",
+        "rag"
+      ],
+      "found_entities": [
+        "second_brain"
+      ],
+      "expected_predicates": [
+        "uses",
+        "extends"
+      ],
+      "found_predicates": [
+        "uses"
+      ],
+      "expected_answer_contains": [
+        "knowledge_graph"
+      ],
+      "answer_matches": [],
+      "answer_misses": [
+        "knowledge_graph"
+      ]
+    },
+    {
+      "query": "What is the relationship between Hybrid Retrieval and the technologies RAG uses?",
+      "query_type": "multi_hop",
+      "difficulty": "medium",
+      "overall": 1.0,
+      "entity_recall": 1.0,
+      "predicate_recall": 1.0,
+      "answer_relevance": 1.0,
+      "temporal_accuracy": 1.0,
+      "expected_entities": [
+        "hybrid_retrieval",
+        "rag"
+      ],
+      "found_entities": [
+        "hybrid_retrieval",
+        "rag"
+      ],
+      "expected_predicates": [
+        "combines",
+        "uses"
+      ],
+      "found_predicates": [
+        "combines",
+        "uses"
+      ],
+      "expected_answer_contains": [
+        "bm25"
+      ],
+      "answer_matches": [
+        "bm25"
+      ],
+      "answer_misses": []
+    },
+    {
+      "query": "What did Ayush believe about NetworkX as of March 2026?",
+      "query_type": "point_in_time",
+      "difficulty": "medium",
+      "overall": 1.0,
+      "entity_recall": 1.0,
+      "predicate_recall": 1.0,
+      "answer_relevance": 1.0,
+      "temporal_accuracy": 1.0,
+      "expected_entities": [
+        "user"
+      ],
+      "found_entities": [
+        "user"
+      ],
+      "expected_predicates": [
+        "believes"
+      ],
+      "found_predicates": [
+        "believes"
+      ],
+      "expected_answer_contains": [
+        "sufficient"
+      ],
+      "answer_matches": [
+        "sufficient"
+      ],
+      "answer_misses": []
+    },
+    {
+      "query": "What did Ayush believe about search in January 2026?",
+      "query_type": "point_in_time",
+      "difficulty": "medium",
+      "overall": 1.0,
+      "entity_recall": 1.0,
+      "predicate_recall": 1.0,
+      "answer_relevance": 1.0,
+      "temporal_accuracy": 1.0,
+      "expected_entities": [
+        "user"
+      ],
+      "found_entities": [
+        "user"
+      ],
+      "expected_predicates": [
+        "believes"
+      ],
+      "found_predicates": [
+        "believes"
+      ],
+      "expected_answer_contains": [
+        "bm25",
+        "enough"
+      ],
+      "answer_matches": [
+        "bm25",
+        "enough"
+      ],
+      "answer_misses": []
+    },
+    {
+      "query": "What did Ayush believe about search in June 2026?",
+      "query_type": "point_in_time",
+      "difficulty": "medium",
+      "overall": 1.0,
+      "entity_recall": 1.0,
+      "predicate_recall": 1.0,
+      "answer_relevance": 1.0,
+      "temporal_accuracy": 1.0,
+      "expected_entities": [
+        "user"
+      ],
+      "found_entities": [
+        "user"
+      ],
+      "expected_predicates": [
+        "believes"
+      ],
+      "found_predicates": [
+        "believes"
+      ],
+      "expected_answer_contains": [
+        "hybrid",
+        "rrf"
+      ],
+      "answer_matches": [
+        "hybrid",
+        "rrf"
+      ],
+      "answer_misses": []
+    },
+    {
+      "query": "Show me all active beliefs as of August 2026",
+      "query_type": "point_in_time",
+      "difficulty": "easy",
+      "overall": 0.0,
+      "entity_recall": 0.0,
+      "predicate_recall": 0.0,
+      "answer_relevance": 0.0,
+      "temporal_accuracy": 0.0,
+      "expected_entities": [
+        "user"
+      ],
+      "found_entities": [],
+      "expected_predicates": [
+        "believes"
+      ],
+      "found_predicates": [],
+      "expected_answer_contains": [
+        "neo4j",
+        "hybrid"
+      ],
+      "answer_matches": [],
+      "answer_misses": [
+        "neo4j",
+        "hybrid"
+      ]
+    },
+    {
+      "query": "What are the contradictions in Ayush's beliefs about graph storage?",
+      "query_type": "contradiction",
+      "difficulty": "hard",
+      "overall": 1.0,
+      "entity_recall": 1.0,
+      "predicate_recall": 1.0,
+      "answer_relevance": 1.0,
+      "temporal_accuracy": 1.0,
+      "expected_entities": [
+        "user"
+      ],
+      "found_entities": [
+        "user"
+      ],
+      "expected_predicates": [
+        "believes"
+      ],
+      "found_predicates": [
+        "believes"
+      ],
+      "expected_answer_contains": [
+        "networkx",
+        "neo4j"
+      ],
+      "answer_matches": [
+        "networkx",
+        "neo4j"
+      ],
+      "answer_misses": []
+    },
+    {
+      "query": "Has Ayush's view on lexical search changed over time?",
+      "query_type": "contradiction",
+      "difficulty": "hard",
+      "overall": 1.0,
+      "entity_recall": 1.0,
+      "predicate_recall": 1.0,
+      "answer_relevance": 1.0,
+      "temporal_accuracy": 1.0,
+      "expected_entities": [
+        "user"
+      ],
+      "found_entities": [
+        "user"
+      ],
+      "expected_predicates": [
+        "believes"
+      ],
+      "found_predicates": [
+        "believes"
+      ],
+      "expected_answer_contains": [
+        "bm25",
+        "hybrid"
+      ],
+      "answer_matches": [
+        "bm25",
+        "hybrid"
+      ],
+      "answer_misses": []
+    },
+    {
+      "query": "Find notes about bi-temporal modeling",
+      "query_type": "episodic",
+      "difficulty": "easy",
+      "overall": 1.0,
+      "entity_recall": 1.0,
+      "predicate_recall": 1.0,
+      "answer_relevance": 1.0,
+      "temporal_accuracy": 1.0,
+      "expected_entities": [],
+      "found_entities": [],
+      "expected_predicates": [],
+      "found_predicates": [],
+      "expected_answer_contains": [
+        "bi-temporal",
+        "temporal"
+      ],
+      "answer_matches": [
+        "bi-temporal",
+        "temporal"
+      ],
+      "answer_misses": []
+    },
+    {
+      "query": "What notes mention ChromaDB?",
+      "query_type": "episodic",
+      "difficulty": "easy",
+      "overall": 1.0,
+      "entity_recall": 1.0,
+      "predicate_recall": 1.0,
+      "answer_relevance": 1.0,
+      "temporal_accuracy": 1.0,
+      "expected_entities": [],
+      "found_entities": [],
+      "expected_predicates": [],
+      "found_predicates": [],
+      "expected_answer_contains": [
+        "chromadb"
+      ],
+      "answer_matches": [
+        "chromadb"
+      ],
+      "answer_misses": []
+    }
+  ]
+}
