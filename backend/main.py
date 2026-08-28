@@ -21,8 +21,14 @@ from backend.api.routes_surfacing import router as surfacing_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize the pipeline on startup."""
-    get_pipeline()
+    """Initialize the pipeline and build communities on startup."""
+    pipeline = get_pipeline()
+    # Auto-build communities if clusters are empty (in-memory, lost on restart)
+    if pipeline.community.total_facts_in_clusters == 0:
+        try:
+            pipeline.build_communities(max_clusters=10, summarize=False)
+        except Exception:
+            pass  # OK if no data yet
     yield
 
 
