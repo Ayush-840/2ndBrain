@@ -71,9 +71,11 @@ def chunk_text(
             )
             idx += 1
 
-        # Advance by (chunk_size - overlap) to create the sliding window
-        start = end - chunk_overlap
-        if start >= end:
-            break  # safety: prevent infinite loop
+        # Advance by (chunk_size - overlap) to create the sliding window.
+        # Ensure we always make forward progress (start must increase).
+        new_start = end - chunk_overlap
+        if new_start <= start:
+            new_start = start + max(1, chunk_size - chunk_overlap)
+        start = new_start
 
     return chunks
