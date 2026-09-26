@@ -24,12 +24,18 @@ Edges (facts):
     confidence         : float — 0..1
     superseded_by      : str|None — fact_id of the fact that replaced this one
     object_literal     : str|None — for facts with a literal object (not an entity)
+
+Document nodes (Phase 6 — "files with a purpose"):
+    entity_type == "document" distinguishes them from normal entities.
+    They reuse the same bi-temporal fields as facts: a corrected
+    usage_context closes the old node (valid_to + superseded_by) and
+    links to a new one — history is refined, never overwritten.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -78,6 +84,169 @@ class TemporalGraph:
 
     def __init__(self):
         self._graph = nx.MultiDiGraph()
+
+    # ── Document operations (Phase 6) ────────────────────────────────
+
+    def add_document(
+        self,
+        *,
+        title: str,
+        usage_context: str,
+        purpose_tags: list[str] | None = None,
+        source_channel: str = "unknown",
+        episodic_ref: str = "",
+        filename: str | None = None,
+        mime_type: str | None = None,
+        blob_path: str | None = None,
+        source_message_id: str | None = None,
+        valid_from: str | None = None,
+        valid_until: str | None = None,
+        valid_to: str | None = None,
+        superseded_from: str | None = None,
+        inferred_by: str = "heuristic",
+        confidence: float = 1.0,
+    ) -> str:
+        """Create a Document node. Returns the new document id."""
+        doc_id = f"doc_{uuid4().hex[:16]}"
+        now = _now_iso()
+        self._graph.add_node(
+            doc_id,
+            entity_id=doc_id,
+            label=title,
+            entity_type="document",
+            document_id=doc_id,
+            title=title,
+            usage_context=usage_context,
+            purpose_tags=list(purpose_tags or []),
+            source_channel=source_channel,
+            source_message_id=source_message_id,
+            episodic_ref=episodic_ref,
+            filename=filename,
+            mime_type=mime_type,
+            blob_path=blob_path,
+            valid_from=valid_from or now,
+            valid_to=valid_to,
+            valid_until=valid_until,
+            recorded_at=now,
+            superseded_by=None,
+            superseded_from=superseded_from,
+            inferred_by=inferred_by,
+            confidence=confidence,
+        )
+        return doc_id
+
+    def get_document(self, doc_id: str) -> dict | None:
+        """Return a document node, or None. Superseded docs are returned as-is."""
+        if not self._graph.has_node(doc_id):
+            return None
+        data = dict(self._graph.nodes[doc_id])
+        if data.get("entity_type") != "document":
+            return None
+        return data
+
+    def list_documents(
+        self,
+        *,
+        purpose_tag: str | None = None,
+        include_superseded: bool = False,
+    ) -> list[dict]:
+        """List documents, newest first.
+
+        Args:
+            purpose_tag: Keep only documents carrying this tag (case-insensitive).
+            include_superseded: Include closed (corrected) versions too.
+        """
+        docs: list[dict] = []
+        for _, data in self._graph.nodes(data=True):
+            if data.get("entity_type") != "document":
+                continue
+            if not include_superseded and data.get("superseded_by"):
+                continue
+            if purpose_tag:
+                tags = [t.lower() for t in data.get("purpose_tags", [])]
+                if purpose_tag.lower() not in tags:
+                    continue
+            docs.append(dict(data))
+        docs.sort(key=lambda d: d.get("recorded_at") or "", reverse=True)
+        return docs
+
+    def correct_document(
+        self,
+        doc_id: str,
+        *,
+        usage_context: str,
+        purpose_tags: list[str] | None = None,
+        valid_until: str | None = None,
+        title: str | None = None,
+    ) -> dict | None:
+        """Supersede a document's purpose — the bi-temporal way.
+
+        The old node's validity window is closed (valid_to + superseded_by)
+        and a new node carries the correction. Nothing is ever overwritten.
+        Returns the new document, or None if doc_id isn't an open document.
+        """
+        old = self.get_document(doc_id)
+        if old is None or old.get("superseded_by"):
+            return None
+
+        new_id = self.add_document(
+            title=title or old.get("title", ""),
+            usage_context=usage_context,
+            purpose_tags=purpose_tags if purpose_tags is not None else old.get("purpose_tags", []),
+            source_channel=old.get("source_channel", "unknown"),
+            episodic_ref=old.get("episodic_ref", ""),
+            filename=old.get("filename"),
+            mime_type=old.get("mime_type"),
+            blob_path=old.get("blob_path"),
+            source_message_id=old.get("source_message_id"),
+            valid_from=old.get("valid_from"),
+            valid_until=valid_until if valid_until is not None else old.get("valid_until"),
+            superseded_from=doc_id,
+            inferred_by="user",
+            confidence=1.0,
+        )
+
+        self._graph.nodes[doc_id]["valid_to"] = _now_iso()
+        self._graph.nodes[doc_id]["superseded_by"] = new_id
+        return self.get_document(new_id)
+
+    def documents_expiring(
+        self,
+        within_days: int = 30,
+        *,
+        now: datetime | None = None,
+    ) -> list[dict]:
+        """Documents whose valid_until falls within N days (or already passed).
+
+        Each result carries ``days_left`` (negative = already expired) and a
+        ``status`` of "red" (≤ 0 days... within a quarter of the window),
+        "amber" (approaching), or "green".
+        """
+        ref = now or datetime.now(UTC)
+        results: list[dict] = []
+        for doc in self.list_documents():
+            until = _parse_date(doc.get("valid_until"))
+            if until is None:
+                continue
+            days_left = (until - ref).days
+            if days_left > within_days:
+                status = "green"
+            elif days_left > max(1, within_days // 3):
+                status = "amber"
+            else:
+                status = "red"
+            entry = dict(doc)
+            entry["days_left"] = days_left
+            entry["status"] = status
+            results.append(entry)
+        results.sort(key=lambda d: d["days_left"])
+        return results
+
+    @property
+    def document_count(self) -> int:
+        return sum(
+            1 for _, d in self._graph.nodes(data=True) if d.get("entity_type") == "document"
+        )
 
     # ── Entity operations ────────────────────────────────────────────
 
@@ -454,10 +623,10 @@ class TemporalGraph:
 
     @property
     def entity_count(self) -> int:
-        # Exclude literal nodes
+        # Exclude literal sinks and document nodes (both are payload, not entities)
         return sum(
             1 for _, d in self._graph.nodes(data=True)
-            if d.get("entity_type") != "literal"
+            if d.get("entity_type") not in ("literal", "document")
         )
 
     @property

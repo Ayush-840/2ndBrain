@@ -7,6 +7,7 @@ Each query is tagged by type:
   - contradiction: asks the system to detect conflicting facts
   - episodic: should match raw text from the episodic store
   - community: tests topic-level summarization (Phase 5)
+  - usage_context: asks for a document by PURPOSE, not content (Phase 7)
 
 Each entry carries:
   - query: natural language question
@@ -231,6 +232,76 @@ GOLDEN_QUERIES: list[GoldenQuery] = [
         expected_answer_contains=["chromadb"],
         difficulty="easy",
     ),
+    # ── Phase 7: usage-context recall — "which file do I need for X" ──
+    # These score whether a Document is found by its PURPOSE rather than by
+    # semantic similarity of its raw text (Research Paper §7, PRD §7).
+    GoldenQuery(
+        query="which document do I need for the tax filing?",
+        query_type="usage_context",
+        expected_answer_contains=["tax filing"],
+        difficulty="medium",
+        notes="Rental agreement stored with usage_context 'For tax filing'",
+    ),
+    GoldenQuery(
+        query="what was that PDF I sent myself for the client call?",
+        query_type="usage_context",
+        expected_answer_contains=["client review"],
+        difficulty="medium",
+        notes="Client deck stored with usage_context mentioning the client review",
+    ),
+    GoldenQuery(
+        query="which file do I need for my visa renewal?",
+        query_type="usage_context",
+        expected_answer_contains=["visa document"],
+        difficulty="medium",
+        notes="Visa approval stored with usage_context 'Visa document, renew before expiry'",
+    ),
+]
+
+
+# ── Document seeds: what the usage-context queries are measured against ──
+#
+# Each entry becomes a Document node (graph) plus episodic chunks (store),
+# exactly like a WhatsApp capture would.
+
+DEFAULT_DOCUMENTS: list[dict] = [
+    {
+        "title": "rental agreement",
+        "filename": "rental_agreement.pdf",
+        "capture_id": "eval-doc-rent",
+        "content": (
+            "RENT AGREEMENT made this day between the landlord and the tenant "
+            "for the residential property, covering the lease term and rent "
+            "payable monthly."
+        ),
+        "usage_context": "For tax filing, needed every March",
+        "purpose_tags": ["tax", "finance", "legal"],
+        "valid_until": None,
+    },
+    {
+        "title": "client review deck",
+        "filename": "client_review_deck.pdf",
+        "capture_id": "eval-doc-client",
+        "content": (
+            "Q3 client review deck export containing the roadmap, metrics "
+            "slide and open questions for the account review."
+        ),
+        "usage_context": "Figma export for the client review on the 30th",
+        "purpose_tags": ["work", "admin"],
+        "valid_until": None,
+    },
+    {
+        "title": "visa approval",
+        "filename": "visa_approval.pdf",
+        "capture_id": "eval-doc-visa",
+        "content": (
+            "VISA APPROVAL letter with the entry validity dates, sticker "
+            "number and conditions of stay for business travel."
+        ),
+        "usage_context": "Visa document, renew before expiry",
+        "purpose_tags": ["travel", "admin"],
+        "valid_until": None,
+    },
 ]
 
 
@@ -249,4 +320,4 @@ def get_golden_set(
 
 def get_all_query_types() -> list[str]:
     """Return all unique query types in the golden set."""
-    return sorted(set(q.query_type for q in GOLDEN_QUERIES))
+    return sorted({q.query_type for q in GOLDEN_QUERIES})

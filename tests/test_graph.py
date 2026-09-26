@@ -200,10 +200,14 @@ class TestPointInTimeQueries:
         facts_july = self.graph.query_as_of("2026-07-01", predicate="status")
         assert len(facts_july) == 2  # both active: old (not yet superseded in July) + new
 
-        # Query in Sep (after supersession recorded) → only new fact
-        facts_sep = self.graph.query_as_of("2026-09-01", predicate="status")
-        assert len(facts_sep) == 1
-        assert facts_sep[0]["object_literal"] == "inactive"
+        # Query after the supersession was recorded → only the new fact.
+        # (Must be relative to "now": supersession is recorded at call time.)
+        from datetime import UTC, datetime, timedelta
+
+        after_supersession = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+        facts_after = self.graph.query_as_of(after_supersession, predicate="status")
+        assert len(facts_after) == 1
+        assert facts_after[0]["object_literal"] == "inactive"
 
 
 class TestSupersedingAndContradictions:

@@ -9,26 +9,43 @@ This is the main entry point the API routes call.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from backend.config import settings
-from backend.enrichment.chunker import Chunk, chunk_text
+from backend.enrichment.chunker import chunk_text
 from backend.enrichment.embedder import embed_texts
 from backend.enrichment.extractor import (
     ExtractionResult,
-    ExtractedEntity,
-    ExtractedFact,
     FactExtractor,
 )
+from backend.enrichment.purpose import UsageContext, infer_usage_context
 from backend.ingestion.base import Capture, IngestionAdapter
 from backend.ingestion.markdown import MarkdownAdapter
 from backend.ingestion.pdf import PDFAdapter
 from backend.ingestion.url_adapter import URLAdapter
+from backend.memory.community import CommunityStore, cluster_facts, summarize_clusters
 from backend.memory.episodic import EpisodicStore
 from backend.memory.graph import TemporalGraph
-from backend.memory.community import CommunityStore, cluster_facts, summarize_clusters
 from backend.retrieval.bm25 import BM25Index
 
 logger = logging.getLogger(__name__)
+
+
+def _suffix_for(filename: str | None, mime_type: str | None) -> str:
+    """Filesystem suffix for a stored blob, derived from name or MIME type."""
+    if filename and "." in filename:
+        suffix = "." + filename.rsplit(".", 1)[-1].lower()
+        if 1 < len(suffix) <= 6:
+            return suffix
+    mime_map = {
+        "application/pdf": ".pdf",
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/webp": ".webp",
+        "text/plain": ".txt",
+        "text/markdown": ".md",
+    }
+    return mime_map.get((mime_type or "").split(";")[0].strip().lower(), ".bin")
 
 # Adapter registry — maps source types to adapter classes
 ADAPTERS: dict[str, type[IngestionAdapter]] = {
@@ -60,6 +77,40 @@ class Pipeline:
         self.graph = graph or TemporalGraph()
         self.community = community or CommunityStore()
         self._extractor = extractor  # lazy init — only when needed
+
+    def load_state(self) -> bool:
+        """Restore the knowledge graph from disk and rebuild the BM25 index.
+
+        ChromaDB already persists chunk vectors; this brings the other two
+        legs of hybrid retrieval (graph + lexical) back in line with it, so
+        a restart doesn't silently degrade search.
+        """
+        path = Path(settings.graph_path)
+        loaded = False
+        if path.exists():
+            try:
+                self.graph.load(str(path))
+                loaded = True
+            except (OSError, ValueError, KeyError):
+                loaded = False
+        if self.bm25.count == 0:
+            try:
+                for chunk_id, text in self.store.iter_chunks():
+                    self.bm25.add(chunk_id, text)
+            except Exception:
+                logger.warning("BM25 rebuild failed", exc_info=True)
+        return loaded
+
+    def save_state(self) -> bool:
+        """Persist the knowledge graph (best-effort; never raises)."""
+        try:
+            path = Path(settings.graph_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self.graph.save(str(path))
+            return True
+        except OSError:
+            logger.warning("graph save failed", exc_info=True)
+            return False
 
     @property
     def extractor(self) -> FactExtractor:
@@ -126,6 +177,79 @@ class Pipeline:
     ) -> dict:
         """Process a single pre-built Capture (e.g., from a URL endpoint)."""
         return self._process_capture(capture, extract=extract)
+
+    def ingest_document(
+        self,
+        capture: Capture,
+        *,
+        filename: str | None = None,
+        mime_type: str | None = None,
+        blob_bytes: bytes | None = None,
+        source_channel: str = "whatsapp",
+        extract: bool | None = None,
+        usage_context: UsageContext | None = None,
+        use_llm: bool = True,
+    ) -> dict:
+        """Ingest a *document*: episodic chunks + encrypted blob + Document node.
+
+        This is the Phase 6 path. Same chunk/embed/store steps as a normal
+        capture, plus two things the plain path doesn't do:
+          - the original bytes are encrypted at rest (IDs, payslips, medical PDFs)
+          - a `Document` node records *why* it was saved, not just what it says
+        """
+        from backend.memory.blob_store import BlobStore
+
+        filename = filename or capture.metadata.get("filename")
+        mime_type = mime_type or capture.metadata.get("mime_type")
+
+        usage = usage_context or infer_usage_context(
+            capture.content,
+            caption=capture.caption,
+            filename=filename,
+            use_llm=use_llm,
+        )
+
+        blob_path: str | None = None
+        if blob_bytes:
+            blob_path = BlobStore().put(
+                blob_bytes,
+                doc_id=capture.capture_id,
+                suffix=_suffix_for(filename, mime_type),
+            )
+
+        if extract is None:
+            extract = bool(settings.anthropic_api_key)
+
+        result = self._process_capture(capture, extract=extract)
+
+        doc_id = self.graph.add_document(
+            title=usage.title,
+            usage_context=usage.usage_context,
+            purpose_tags=usage.purpose_tags,
+            source_channel=source_channel,
+            episodic_ref=capture.capture_id,
+            filename=filename,
+            mime_type=mime_type,
+            blob_path=blob_path,
+            source_message_id=capture.sender_message_id,
+            valid_until=usage.valid_until,
+            inferred_by=usage.inferred_by,
+            confidence=usage.confidence,
+        )
+
+        result.update(
+            {
+                "doc_id": doc_id,
+                "title": usage.title,
+                "usage_context": usage.usage_context,
+                "purpose_tags": usage.purpose_tags,
+                "valid_until": usage.valid_until,
+                "inferred_by": usage.inferred_by,
+                "blob_path": blob_path,
+                "num_captures": 1,
+            }
+        )
+        return result
 
     def extract_and_store(
         self,
@@ -215,8 +339,9 @@ class Pipeline:
 
         Used as a fallback when the knowledge graph has no facts yet.
         """
-        from backend.memory.community import TopicCluster
         import numpy as np
+
+        from backend.memory.community import TopicCluster
 
         # Fetch all chunks from ChromaDB
         results = self.store._collection.get(include=["documents", "metadatas"])

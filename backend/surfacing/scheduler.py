@@ -116,11 +116,21 @@ def _daily_job(graph=None, community=None) -> dict:
     digest = agent.generate_digest(digest_type="daily")
     logger.info(f"Daily digest: {digest.summary}")
 
+    # Phase 7.1 — proactive WhatsApp nudges for expiring documents
+    reminded: list = []
+    try:
+        reminded = agent.push_document_reminders()
+        if reminded:
+            logger.info(f"Sent {len(reminded)} document reminder(s) over WhatsApp")
+    except Exception as exc:  # noqa: BLE001 — a dead channel must not fail the job
+        logger.warning(f"Document reminders failed: {exc}")
+
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "contradictions": len(contradictions),
         "digest_summary": digest.summary,
         "entries": len(digest.entries),
+        "document_reminders_sent": len(reminded),
     }
 
 

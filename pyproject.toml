@@ -36,6 +36,10 @@ dependencies = [
 
     # HTTP
     "httpx>=0.27.0",
+    "requests>=2.31.0",      # WhatsApp Cloud API calls (plain, no SDK)
+
+    # Encryption at rest for captured documents (Phase 6.2)
+    "cryptography>=42.0",
 
     # Utilities
     "python-multipart>=0.0.9",

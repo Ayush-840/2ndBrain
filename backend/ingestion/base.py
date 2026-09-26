@@ -17,10 +17,13 @@ class Capture:
 
     content: str
     source_path: str
-    source_type: str  # "markdown", "pdf", "url", etc.
+    source_type: str  # "markdown", "pdf", "url", "whatsapp", etc.
     metadata: dict = field(default_factory=dict)
     captured_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     capture_id: str = field(default_factory=lambda: uuid4().hex)
+    # Phase 6 — optional WhatsApp fields (ignored by the other adapters).
+    caption: str | None = None
+    sender_message_id: str | None = None
 
 
 class IngestionAdapter(ABC):

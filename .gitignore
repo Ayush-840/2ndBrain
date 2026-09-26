@@ -24,3 +24,10 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime data & secrets (never committed)
+data/.blob_key
+data/graph.json
+data/audit.log.jsonl
+data/contradictions.json
+data/whatsapp_processed_ids.json

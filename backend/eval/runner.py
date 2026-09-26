@@ -9,19 +9,18 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from backend.eval.golden_set import GoldenQuery, get_golden_set, DEFAULT_SEEDS
+from backend.eval.golden_set import DEFAULT_SEEDS, get_golden_set
 from backend.eval.scorer import (
-    QueryScore,
     EvalResult,
-    score_query,
+    QueryScore,
     aggregate_results,
     save_results,
+    score_query,
 )
 from backend.memory.episodic import EpisodicStore
 from backend.memory.graph import TemporalGraph
 from backend.retrieval.bm25 import BM25Index
 from backend.retrieval.hybrid import HybridRetriever
-from backend.retrieval.graph_retrieval import GraphRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +102,53 @@ class EvalConfig:
 
     seeds: list[dict] | None = None
     episodic_chunks: list[dict] | None = None  # optional text chunks to seed episodic store
+    documents: list[dict] | None = None  # Document nodes; defaults to DEFAULT_DOCUMENTS
     top_k: int = 10
     save_path: str = "data/eval_results.json"
+
+
+def seed_documents(
+    graph: TemporalGraph,
+    store: EpisodicStore,
+    bm25: BM25Index,
+    documents: list[dict] | None = None,
+) -> None:
+    """Seed Document nodes plus their episodic chunks (Phase 7 usage-context recall)."""
+    from backend.enrichment.chunker import Chunk
+    from backend.enrichment.embedder import embed_texts
+
+    for spec in documents or []:
+        capture_id = spec.get("capture_id") or f"eval-doc-{abs(hash(spec.get('title', '')))}"
+        content = spec.get("content", "")
+
+        if content:
+            embeddings = embed_texts([content])
+            chunk = Chunk(
+                text=content,
+                chunk_index=0,
+                source_capture_id=capture_id,
+                start_offset=0,
+                end_offset=len(content),
+            )
+            doc_ids = store.add_chunks(
+                [chunk],
+                embeddings,
+                source_path=spec.get("filename", "eval.pdf"),
+                source_type="whatsapp",
+            )
+            for doc_id in doc_ids:
+                bm25.add(doc_id, content)
+
+        graph.add_document(
+            title=spec.get("title", ""),
+            usage_context=spec.get("usage_context"),
+            purpose_tags=spec.get("purpose_tags", []),
+            episodic_ref=capture_id,
+            valid_until=spec.get("valid_until"),
+            source_channel=spec.get("source_channel", "whatsapp"),
+            filename=spec.get("filename"),
+            inferred_by=spec.get("inferred_by", "user"),
+        )
 
 
 def run_eval(
@@ -162,6 +206,14 @@ def run_eval(
             doc_ids = store.add_chunks(chunks, embeddings, source_path="/eval.md")
             for doc_id, chunk in zip(doc_ids, chunks):
                 bm25.add(doc_id, chunk.text)
+
+    # Seed Document nodes (usage_context / purpose_tags) for purpose-aware eval
+    documents = config.documents
+    if documents is None:
+        from backend.eval.golden_set import DEFAULT_DOCUMENTS
+        documents = DEFAULT_DOCUMENTS
+    if documents:
+        seed_documents(graph, store, bm25, documents)
 
     # Build retriever
     retriever = HybridRetriever(

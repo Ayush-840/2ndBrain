@@ -105,6 +105,15 @@ curl -X POST http://localhost:8000/surfing/digest \
 
 # Detect contradictions
 curl -X POST http://localhost:8000/surfing/contradictions
+
+# Seed the canonical profile + the six real conflicts from 09/10-seed-data
+python3 -m backend.memory.profile_seeds
+
+# Personal memory surface (profile, reminders, review queue, export)
+curl http://localhost:8000/profile
+curl "http://localhost:8000/reminders?window_days=30"
+curl http://localhost:8000/contradictions
+curl -O http://localhost:8000/export          # full zipped export
 ```
 
 ## Project Structure
@@ -118,15 +127,22 @@ second-brain/
 │   ├── ingestion/
 │   │   ├── base.py          # Abstract IngestionAdapter + Capture dataclass
 │   │   ├── markdown.py      # Obsidian-compatible .md adapter
-│   │   └── pdf.py           # PyMuPDF-based PDF adapter
+│   │   ├── pdf.py           # PyMuPDF-based PDF adapter
+│   │   ├── url_adapter.py   # URL/browser-clip adapter
+│   │   └── whatsapp.py      # WhatsApp Cloud API client + webhook parsing
 │   ├── enrichment/
 │   │   ├── chunker.py       # Overlap-based text chunking
 │   │   ├── embedder.py      # sentence-transformers wrapper
 │   │   └── extractor.py     # Claude tool-calling fact extraction
 │   ├── memory/
 │   │   ├── episodic.py      # ChromaDB episodic store
-│   │   ├── graph.py         # NetworkX bi-temporal graph
-│   │   └── community.py     # Topic clustering + LLM summarization
+│   │   ├── graph.py         # NetworkX bi-temporal graph (+ Document nodes)
+│   │   ├── community.py     # Topic clustering + LLM summarization
+│   │   ├── profile.py       # Profile engine: fields/people/goals/timeline
+│   │   ├── review_queue.py  # Persistent contradiction flags (accept/reject)
+│   │   ├── audit.py         # Append-only access audit log
+│   │   ├── blob_store.py    # Encrypted document blobs (Fernet, AES at rest)
+│   │   └── profile_seeds.py # 09/10 canonical profile loader
 │   ├── retrieval/
 │   │   ├── bm25.py          # BM25Okapi lexical search
 │   │   ├── hybrid.py        # Dense + BM25 + Graph fusion (3-way RRF)
@@ -135,19 +151,23 @@ second-brain/
 │   │   ├── agent.py         # Contradiction detection, resurfacing, digests
 │   │   └── scheduler.py     # APScheduler integration
 │   ├── eval/
-│   │   ├── golden_set.py    # 15 golden queries across 4 types
+│   │   ├── golden_set.py    # 18 golden queries across 6 types
 │   │   ├── runner.py        # Eval execution engine
 │   │   └── scorer.py        # Automated scoring + aggregation
 │   ├── frontend/
-│   │   ├── app.py           # NiceGUI pages (Inbox, Wiki, Graph, Query, Digest)
+│   │   ├── app.py           # NiceGUI pages (Home, Inbox, Documents, Profile, Wiki, Graph, Query, Digest)
 │   │   └── auth.py          # Session-based authentication
+│   ├── security.py             # Startup security gate (PRD §6.2)
 │   └── api/
-│       ├── routes_ingest.py     # POST /ingest, /ingest/file, /ingest/url
-│       ├── routes_query.py      # POST /query
-│       ├── routes_graph.py      # POST /graph/query-as-of, /graph/entity, /graph/export
-│       ├── routes_community.py  # POST /community/build, GET /community/clusters
-│       └── routes_surfacing.py  # POST /surfing/contradictions, /surfing/digest
-├── tests/                   # 190+ unit & integration tests (pytest)
+│       ├── routes_ingest.py         # POST /ingest, /ingest/file, /ingest/url
+│       ├── routes_ingest_whatsapp.py# WhatsApp webhook (HMAC, dedupe, corrections)
+│       ├── routes_documents.py      # Document vault API (browse/correct/download)
+│       ├── routes_query.py          # POST /query (purpose-aware hybrid search)
+│       ├── routes_profile.py        # Profile/reminders/contradictions/audit/export
+│       ├── routes_graph.py          # POST /graph/query-as-of, /graph/entity, /graph/export
+│       ├── routes_community.py      # POST /community/build, GET /community/clusters
+│       └── routes_surfacing.py      # POST /surfing/contradictions, /surfing/digest
+├── tests/                   # 280+ unit & integration tests (pytest)
 ├── data/
 │   ├── sample_vault/        # Sample Obsidian notes for testing
 │   └── eval_results.json    # Latest eval results
@@ -158,7 +178,7 @@ second-brain/
 ## Running Tests
 
 ```bash
-# All fast tests (~11s)
+# All fast tests (~25s, 267 tests)
 pytest tests/ -v --ignore=tests/test_hybrid_3way.py --ignore=tests/test_pipeline_graph.py
 
 # Full suite (includes model loading)
@@ -167,7 +187,9 @@ pytest tests/ -v
 
 ## Evaluation Results
 
-The eval harness tests 15 golden queries across 4 types:
+The eval harness tests 18 golden queries across 6 types (including
+`usage_context` — "which file do I need for X", scored against purpose-tagged
+documents):
 
 | Query Type | Accuracy | Count |
 |-----------|----------|-------|
@@ -217,13 +239,32 @@ Facts are clustered by embedding similarity into topic groups, each with an LLM-
 | POST | `/surfing/digest` | Generate digest report |
 | POST | `/surfing/run-daily` | Trigger daily job manually |
 | GET | `/surfing/scheduler` | Scheduler status |
+| GET/POST | `/ingest/whatsapp/webhook` | WhatsApp capture channel (HMAC-verified) |
+| GET | `/documents` | Browse purpose-tagged documents |
+| GET | `/documents/expiring` | Documents needing attention |
+| GET | `/documents/{id}/file` | Original bytes, decrypted on read |
+| POST | `/documents/{id}/correct` | Supersede a document's purpose |
+| GET | `/profile` | Current structured facts (sensitive fields decrypted) |
+| POST | `/profile` | Set a field (close-old / insert-new) |
+| GET | `/profile/history?field=` | Bi-temporal history of one field |
+| GET | `/profile/relationships` | Family/contacts as graph edges |
+| GET/POST | `/profile/goals` | Goals + `/{id}/checkins` progress history |
+| GET/POST | `/profile/timeline` | Life timeline |
+| GET | `/reminders?window_days=` | Unified reminders (docs + goals + events) |
+| GET | `/contradictions` | Review queue (auto-syncs from the graph) |
+| POST | `/contradictions/{id}/resolve` | Explicit accept/reject of a proposed value |
+| GET | `/audit-log` | Append-only access log |
+| GET | `/export` | Full data export, zipped |
 
 ## Frontend (NiceGUI)
 
 The NiceGUI frontend is mounted at `/ui` on the FastAPI server. Pages:
 
-- **Home** (`/ui/`) — Dashboard with quick links
-- **Inbox** (`/ui/ingest`) — Ingest files, view storage stats
+- **Home** (`/ui/`) — Dashboard with quick links + upcoming reminders feed
+- **Inbox** (`/ui/inbox`) — Ingest files, WhatsApp/capture status
+- **Documents** (`/ui/documents`) — Document vault with expiry chips + inline purpose edit
+- **Profile** (`/ui/profile`) — Facts (with per-field history), relationships, goals
+  with check-ins, timeline, and the contradiction review queue (accept/reject)
 - **Wiki** (`/ui/wiki`) — Browse topic clusters and summaries
 - **Graph** (`/ui/graph`) — Interactive ECharts graph explorer with filters
 - **Query** (`/ui/query`) — Chat-style interface with point-in-time date picker
@@ -271,6 +312,34 @@ export BRAIN_AUTH_ENABLED=false
 | `BRAIN_AUTH_ENABLED` | `true` | Enable frontend authentication |
 | `BRAIN_AUTH_USERNAME` | `admin` | Frontend login username |
 | `BRAIN_AUTH_PASSWORD` | `changeme` | Frontend login password |
+| `BRAIN_GRAPH_PATH` | `data/graph.json` | Durable knowledge graph (saved on shutdown + after mutations) |
+| `BRAIN_AUDIT_LOG_PATH` | `data/audit.log.jsonl` | Append-only access audit log |
+| `BRAIN_REVIEW_QUEUE_PATH` | `data/contradictions.json` | Contradiction review queue |
+| `BRAIN_SENSITIVE_PROFILE_FIELDS` | `govt_id_number,passport_number,…` | Fields encrypted at the application boundary |
+| `BRAIN_REMINDER_WINDOW_DAYS` | `30` | Default horizon for the reminder feed |
+| `BRAIN_BLOB_KEY` | — | Fernet key/passphrase for document blobs (auto-generated if unset) |
+| `BRAIN_ALLOW_INSECURE` | `false` | Opt out of the startup security gate (local experiments only) |
+
+### WhatsApp capture channel (Phase 6)
+
+Set all of these to enable webhook capture; the app boots fine without them
+(the channel simply stays disabled). The startup security gate
+(`backend/security.py`) refuses to boot if a webhook is half-configured.
+
+| Variable | Description |
+|----------|-------------|
+| `BRAIN_WHATSAPP_ACCESS_TOKEN` | Meta Graph API token (needs `whatsapp_business_messaging`) |
+| `BRAIN_WHATSAPP_PHONE_NUMBER_ID` | Business phone number id |
+| `BRAIN_WHATSAPP_APP_SECRET` | App secret used to verify `X-Hub-Signature-256` (fail-closed) |
+| `BRAIN_WHATSAPP_VERIFY_TOKEN` | Any string; echoed on the GET handshake |
+| `BRAIN_WHATSAPP_ALLOWED_SENDER` | Phone number allowed to send (allow-list) |
+| `BRAIN_WHATSAPP_ALLOW_UNSIGNED` | `true` to skip signature checks — dev only, never public |
+| `BRAIN_PROCESSED_IDS_PATH` | Dedupe ledger for webhook deliveries (default `data/whatsapp_processed_ids.json`) |
+
+Media messages are fetched through the Graph API (media ids expire after
+7 days), extracted with the same PDF/text pipeline as uploads, and Meta's
+retries are deduped on the WhatsApp message id. Reply to a captured
+document to correct its purpose — the correction supersedes the old row. 
 
 ## Design Decisions
 

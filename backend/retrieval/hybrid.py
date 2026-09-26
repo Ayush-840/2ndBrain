@@ -8,10 +8,15 @@ Uses Reciprocal Rank Fusion (RRF) to combine three ranked lists:
 The graph source is what makes this system fundamentally different from
 plain RAG: it can answer questions that require following entity
 relationships, not just finding similar text.
+
+Phase 7 adds a fourth, non-fused source: when a query asks *which file do I
+need* rather than *what does this say*, Document nodes are boosted ahead of
+the fused list based on their purpose_tags / usage_context.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from backend.config import settings
@@ -20,6 +25,30 @@ from backend.memory.episodic import EpisodicStore
 from backend.memory.graph import TemporalGraph
 from backend.retrieval.bm25 import BM25Index
 from backend.retrieval.graph_retrieval import GraphRetriever
+
+# "which document do I need for the tax filing", "that PDF I sent myself",
+# "what file for my visa renewal" — queries about *purpose*, not content.
+_DOC_INTENT = re.compile(
+    r"\b(which|what|where|find|send me|do i have)\b[^?]{0,60}?"
+    r"\b(document|file|pdf|form|attachment|paper|copy|scan)\b"
+    r"|\bdo i need\b[^?]{0,40}?\bfor\b"
+    r"|\b(which|what)\b[^?]{0,40}?\b(form|document|file)\b[^?]{0,40}?\bfor\b",
+    re.IGNORECASE,
+)
+
+_STOPWORDS = {
+    "the", "a", "an", "which", "what", "where", "is", "of", "for", "do",
+    "i", "need", "my", "me", "that", "this", "in", "on", "to", "and",
+    "was", "were", "it", "have", "has", "find", "send", "file", "files",
+    "document", "documents", "pdf", "attachment", "paper", "copy", "scan",
+}
+
+
+def _query_tokens(query: str) -> set[str]:
+    return {
+        t for t in re.findall(r"[a-z0-9]+", query.lower())
+        if t not in _STOPWORDS and len(t) > 2
+    }
 
 
 @dataclass
@@ -111,6 +140,7 @@ class HybridRetriever:
         graph_weight: float | None = None,
         graph_hops: int | None = None,
         valid_as_of: str | None = None,
+        boost_documents: bool = True,
     ) -> list[SearchResult]:
         """Run hybrid search and return fused, ranked results.
 
@@ -127,6 +157,8 @@ class HybridRetriever:
             graph_weight: Weight for graph traversal results.
             graph_hops: How many hops to traverse in the graph.
             valid_as_of: If set, only return graph facts valid at this date.
+            boost_documents: Rank purpose-matched Document nodes first when the
+                query is about *which file*, not *what does it say*.
         """
         top_k = top_k or settings.top_k
         dense_w = dense_weight if dense_weight is not None else settings.dense_weight
@@ -173,10 +205,15 @@ class HybridRetriever:
         ranked_lists = [dense_ranked, bm25_results, graph_ranked]
         weights = [dense_w, bm25_w, graph_w]
 
+        # ── Purpose-aware document boost (computed even if no other sources) ──
+        boosted: list[SearchResult] = []
+        if boost_documents:
+            boosted = self._purpose_boost(query)
+
         # Only include non-empty lists
         active_lists = [(lst, w) for lst, w in zip(ranked_lists, weights) if lst]
         if not active_lists:
-            return []
+            return boosted
 
         merged = reciprocal_rank_fusion(
             ranked_lists=[lst for lst, _ in active_lists],
@@ -213,4 +250,77 @@ class HybridRetriever:
                     metadata=item["metadata"],
                 )
             )
+
+        if boosted:
+            seen = {r.id for r in boosted}
+            output = boosted + [r for r in output if r.id not in seen]
+            output = output[: max(top_k, len(boosted))]
+
         return output
+
+    def _purpose_boost(self, query: str, max_docs: int = 3) -> list[SearchResult]:
+        """Purpose-aware boost: rank Document nodes by how well they match intent.
+
+        Semantic search over raw text answers "what is this about"; this answers
+        "which file do I need for X" — the question documents were stored *for*.
+        Returns [] unless the query is document-shaped and documents exist.
+        """
+        if self._graph is None or not _DOC_INTENT.search(query):
+            return []
+
+        docs = self._graph.list_documents()
+        tokens = _query_tokens(query)
+        if not docs or not tokens:
+            return []
+
+        scored: list[tuple[float, dict]] = []
+        for doc in docs:
+            tags = {t.lower() for t in doc.get("purpose_tags", [])}
+            haystack = " ".join(
+                filter(
+                    None,
+                    [
+                        doc.get("title") or "",
+                        doc.get("usage_context") or "",
+                        doc.get("filename") or "",
+                        " ".join(tags),
+                    ],
+                )
+            ).lower()
+            overlap = tokens & set(re.findall(r"[a-z0-9]+", haystack))
+            tag_hits = {t for t in tags if any(tok in t or t in tok for tok in tokens)}
+            if not overlap and not tag_hits:
+                continue
+
+            score = len(overlap) + 2.0 * len(tag_hits)
+            days_left = doc.get("days_left")
+            if days_left is not None and days_left <= 0:
+                score += 0.5  # stale-but-urgent documents surface first
+            scored.append((score, doc))
+
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+
+        results: list[SearchResult] = []
+        for score, doc in scored[:max_docs]:
+            chunks = self._store.get_by_capture(doc.get("episodic_ref", ""), limit=1)
+            purpose_line = f"{doc.get('title') or 'document'} — {doc.get('usage_context') or 'no purpose recorded'}"
+            body = chunks[0]["text"] if chunks else ""
+            text = f"{purpose_line}\n\n{body[:800]}" if body else purpose_line
+
+            results.append(
+                SearchResult(
+                    id=chunks[0]["id"] if chunks else doc.get("document_id", ""),
+                    text=text,
+                    score=round(1.0 + score / 10.0, 4),  # outranks RRF scores (≤1)
+                    source="document+purpose",
+                    metadata={
+                        "document_id": doc.get("document_id"),
+                        "title": doc.get("title"),
+                        "usage_context": doc.get("usage_context"),
+                        "purpose_tags": doc.get("purpose_tags", []),
+                        "source_channel": doc.get("source_channel"),
+                        "valid_until": doc.get("valid_until"),
+                    },
+                )
+            )
+        return results

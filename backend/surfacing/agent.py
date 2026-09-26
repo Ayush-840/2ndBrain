@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timezone, timedelta
 
 from backend.memory.graph import TemporalGraph
 from backend.memory.community import CommunityStore
@@ -90,6 +90,8 @@ class SurfacingAgent:
     ):
         self._graph = graph
         self._community = community
+        # document_id → ISO date we last nudged about it (once/day cap)
+        self._reminded: dict[str, str] = {}
 
     def detect_contradictions(
         self,
@@ -252,6 +254,63 @@ class SurfacingAgent:
 
         return results
 
+    def documents_needing_attention(
+        self,
+        within_days: int | None = None,
+    ) -> list[dict]:
+        """Documents with an approaching expiry / renewal / deadline.
+
+        Both the Digest page section and the WhatsApp nudge read this same
+        list, so the dashboard and the message can never disagree.
+        """
+        from backend.config import settings
+
+        window = within_days or settings.document_expiry_warning_days
+        return self._graph.documents_expiring(window)
+
+    def push_document_reminders(self, within_days: int | None = None) -> list[dict]:
+        """Send a WhatsApp nudge for documents about to go stale.
+
+        Only the "red"/"amber" ones, and at most once per document per day.
+        Silently a no-op when WhatsApp isn't configured.
+        """
+        from backend.config import settings
+        from backend.ingestion.whatsapp import WhatsAppClient
+
+        if not settings.whatsapp_enabled or not settings.whatsapp_allowed_sender:
+            return []
+
+        today = datetime.now(timezone.utc).date().isoformat()
+        sent: list[dict] = []
+        client = WhatsAppClient()
+
+        for doc in self.documents_needing_attention(within_days):
+            if doc.get("status") == "green":
+                continue
+            if self._reminded.get(doc.get("document_id")) == today:
+                continue
+
+            days_left = doc.get("days_left")
+            if days_left is None:
+                continue
+            if days_left < 0:
+                timeline = f"expired {abs(days_left)} days ago"
+            elif days_left == 0:
+                timeline = "expires today"
+            else:
+                timeline = f"expires in {days_left} days"
+
+            body = (
+                f"⏰ {doc.get('title', 'A document')} — {timeline}.\n"
+                f"For: {doc.get('usage_context') or 'no purpose recorded'}"
+            )
+
+            if client.send_text(settings.whatsapp_allowed_sender, body):
+                self._reminded[doc.get("document_id")] = today
+                sent.append(doc)
+
+        return sent
+
     def generate_digest(
         self,
         digest_type: str = "daily",
@@ -263,7 +322,7 @@ class SurfacingAgent:
             digest_type: "daily" or "weekly"
             since: Start of the reporting period. Defaults to 24h (daily) or 7d (weekly).
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if since is None:
             if digest_type == "weekly":
@@ -304,6 +363,22 @@ class SurfacingAgent:
                     for c in contradictions[:5]
                 ),
                 fact_ids=[c.old_fact_id for c in contradictions],
+                timestamp=now.isoformat(),
+            ))
+
+        # 2b. Documents needing attention (Phase 7)
+        attention = self.documents_needing_attention()
+        if attention:
+            entries.append(DigestEntry(
+                category="documents",
+                title=f"{len(attention)} documents needing attention",
+                description="\n".join(
+                    f"• {d.get('title', 'document')} — "
+                    + (f"expires in {d['days_left']}d" if (d.get("days_left") or 0) >= 0
+                       else f"expired {abs(d.get('days_left', 0))}d ago")
+                    for d in attention[:5]
+                ),
+                fact_ids=[d.get("document_id", "") for d in attention],
                 timestamp=now.isoformat(),
             ))
 

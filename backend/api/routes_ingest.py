@@ -6,10 +6,11 @@ POST /ingest/url   — ingest a URL (browser clip / web page)
 
 from __future__ import annotations
 
+import atexit
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from backend.pipeline import Pipeline
@@ -21,9 +22,12 @@ _pipeline: Pipeline | None = None
 
 
 def get_pipeline() -> Pipeline:
+    """Lazily build the shared pipeline, restoring persisted state once."""
     global _pipeline
     if _pipeline is None:
         _pipeline = Pipeline()
+        _pipeline.load_state()
+        atexit.register(_pipeline.save_state)
     return _pipeline
 
 

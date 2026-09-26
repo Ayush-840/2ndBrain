@@ -151,6 +151,44 @@ class EpisodicStore:
             )
         return items
 
+    def iter_chunks(self):
+        """Yield (chunk_id, text) for every stored chunk (used to rebuild BM25)."""
+        data = self.collection.get(include=["documents"])
+        for chunk_id, text in zip(data.get("ids") or [], data.get("documents") or []):
+            if chunk_id and text:
+                yield chunk_id, text
+
+    def get_by_capture(self, capture_id: str, limit: int = 3) -> list[dict]:
+        """Return chunks belonging to one capture (e.g. one WhatsApp document).
+
+        Used by purpose-aware retrieval to pull a whole document back rather
+        than whichever of its chunks happened to rank highest.
+        """
+        if not capture_id:
+            return []
+        try:
+            results = self._collection.get(
+                where={"capture_id": capture_id},
+                limit=limit,
+                include=["documents", "metadatas"],
+            )
+        except Exception:  # noqa: BLE001 — a filter Chroma dislikes must not 500 a query
+            return []
+
+        items: list[dict] = []
+        for i, doc_id in enumerate(results.get("ids") or []):
+            metadatas = results.get("metadatas") or []
+            documents = results.get("documents") or []
+            items.append(
+                {
+                    "id": doc_id,
+                    "text": documents[i] if i < len(documents) else "",
+                    "metadata": metadatas[i] if i < len(metadatas) else {},
+                }
+            )
+        items.sort(key=lambda it: (it["metadata"] or {}).get("chunk_index", 0))
+        return items
+
     def delete_source(self, source_path: str) -> int:
         """Delete all chunks from a specific source.  Returns count deleted."""
         before = self.count
