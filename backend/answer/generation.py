@@ -115,7 +115,7 @@ def generate_answer(
             answer = _call_local(messages)
         else:
             answer = _call_cloud(messages)
-    except Exception as exc:  # noqa: BLE001 - normalize provider errors
+    except Exception as exc:
         logger.warning("answer generation failed on %s: %s", decision.provider, exc)
         raise LLMCallError(f"{decision.provider} model call failed: {exc}") from exc
 

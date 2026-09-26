@@ -1,22 +1,20 @@
 """Tests for answer generation: routing, sessions, and POST /query/answer."""
 
-from fastapi.testclient import TestClient
-
 import pytest
+from fastapi.testclient import TestClient
 
 from backend.answer.generation import build_context, build_messages
 from backend.answer.routing import LLMUnavailableError, RouteDecision, route_llm
 from backend.answer.sessions import SessionStore
 from backend.config import settings
-from backend.retrieval.hybrid import SearchResult
+from backend.memory.community import CommunityStore
 
 # ── Pipeline fixture (same pattern as test_api.py) ──────────────────
-
 from backend.memory.episodic import EpisodicStore
 from backend.memory.graph import TemporalGraph
-from backend.memory.community import CommunityStore
-from backend.retrieval.bm25 import BM25Index
 from backend.pipeline import Pipeline
+from backend.retrieval.bm25 import BM25Index
+from backend.retrieval.hybrid import SearchResult
 
 _store = EpisodicStore(persist_dir="/tmp/test_answer_episodic")
 _store.reset()
@@ -33,7 +31,7 @@ import backend.api.routes_query
 backend.api.routes_ingest.get_pipeline = lambda: _test_pipeline
 backend.api.routes_query.get_pipeline = lambda: _test_pipeline
 
-from backend.main import app  # noqa: E402  (after pipeline patching)
+from backend.main import app
 
 
 def _result(i: int, text: str, metadata: dict | None = None) -> SearchResult:

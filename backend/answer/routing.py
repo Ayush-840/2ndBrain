@@ -13,7 +13,6 @@ records an explicit fallback so the caller (and the audit log) can see it.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from backend.config import settings
@@ -69,9 +68,7 @@ def _result_is_sensitive(metadata: dict, sensitive: set[str]) -> bool:
     field = str(metadata.get("field", "")).strip().lower()
     if field and field in settings.sensitive_fields:
         return True
-    if metadata.get("encrypted") or metadata.get("sensitive"):
-        return True
-    return False
+    return bool(metadata.get("encrypted") or metadata.get("sensitive"))
 
 
 def _query_is_sensitive(question: str) -> bool:
