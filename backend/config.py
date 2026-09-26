@@ -39,6 +39,18 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-20250514"
 
+    # --- Answer generation (06 §3 privacy-tiered LLM routing) ---
+    # Local model endpoint (OpenAI-compatible, e.g. Ollama
+    # http://localhost:11434/v1). Empty = no local tier available.
+    local_llm_base_url: str = ""
+    local_llm_model: str = "llama3.1:8b"
+    # Categories always routed to the local model when present.
+    sensitive_categories: str = "identity,medical,financial"
+    answer_max_tokens: int = 1024
+    # Conversation memory: how many turns a session keeps.
+    answer_history_turns: int = 8
+    answer_session_ttl_seconds: int = 21600  # 6h idle expiry
+
     # --- ChromaDB ---
     chroma_collection: str = "episodic_memory"
 
@@ -95,6 +107,19 @@ class Settings(BaseSettings):
     def sensitive_fields(self) -> set[str]:
         """Normalized set of profile fields that get field-level encryption."""
         return {f.strip().lower() for f in self.sensitive_profile_fields.split(",") if f.strip()}
+
+    @property
+    def sensitive_category_set(self) -> set[str]:
+        """Document categories that must never leave the machine (06 §3)."""
+        return {c.strip().lower() for c in self.sensitive_categories.split(",") if c.strip()}
+
+    @property
+    def local_llm_ready(self) -> bool:
+        return bool(self.local_llm_base_url)
+
+    @property
+    def cloud_llm_ready(self) -> bool:
+        return bool(self.anthropic_api_key)
 
     @property
     def whatsapp_enabled(self) -> bool:

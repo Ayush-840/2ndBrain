@@ -872,19 +872,78 @@ def _query_page():
         with ui.row().classes("gap-4 mb-4 items-end"):
             top_k = ui.number(label="Top K", value=10, min=1, max=50).classes("w-24")
             valid_as_of = ui.input(label="Point-in-time (YYYY-MM-DD)").classes("w-48")
+            use_answer = ui.switch("AI answer", value=True).classes("mb-1")
 
         results_container = ui.column().classes("w-full mt-4")
 
+        # Conversation memory: kept across asks until "New chat".
+        session: dict = {"id": None}
+
+        def render_answer(data: dict):
+            route = data["route"]
+            results_container.clear()
+            with results_container:
+                with ui.row().classes("gap-2 items-center mb-2"):
+                    provider = route.get("provider", "none")
+                    color = (
+                        "bg-gray-200 text-gray-800"
+                        if provider == "none"
+                        else "bg-green-100 text-green-800"
+                        if provider == "local"
+                        else "bg-purple-100 text-purple-800"
+                    )
+                    ui.badge(f"{provider} model", color=color)
+                    if route.get("sensitive"):
+                        ui.badge("sensitive → stays local", color="bg-red-100 text-red-800")
+                    if route.get("reason"):
+                        ui.label(route["reason"]).classes("text-xs text-gray-500")
+                with ui.card().classes("w-full p-4 mb-2"):
+                    ui.label(data["answer"]).classes("text-sm whitespace-pre-wrap")
+                if data["citations"]:
+                    ui.label("Sources").classes("text-xs font-semibold text-gray-500 mb-1")
+                    for c in data["citations"]:
+                        with ui.card().classes("w-full p-2 mb-1 bg-gray-50"):
+                            with ui.row().classes("items-center gap-2"):
+                                ui.badge(f"[{c['index']}]").classes("bg-blue-100 text-blue-800")
+                                ui.label(c["source"]).classes("text-xs text-gray-500")
+                                ui.label(f"score {c['score']:.3f}").classes("text-xs text-gray-400")
+                            ui.label(c["text"][:300]).classes("text-xs mt-1")
+
         async def do_query():
             import httpx
-            payload = {
-                "query": query_input.value,
-                "top_k": int(top_k.value),
-            }
-            if valid_as_of.value:
-                payload["valid_as_of"] = valid_as_of.value
+            question = (query_input.value or "").strip()
+            if not question:
+                ui.notify("Type a question first", type="warning")
+                return
 
             async with httpx.AsyncClient() as client:
+                if use_answer.value:
+                    payload = {"question": question, "top_k": int(top_k.value)}
+                    if session["id"]:
+                        payload["session_id"] = session["id"]
+                    if valid_as_of.value:
+                        payload["valid_as_of"] = valid_as_of.value
+                    resp = await client.post(
+                        "http://localhost:8000/query/answer", json=payload, timeout=120
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        session["id"] = data["session_id"]
+                        render_answer(data)
+                    elif resp.status_code == 503:
+                        ui.notify(
+                            "No LLM configured — set BRAIN_ANTHROPIC_API_KEY "
+                            "or BRAIN_LOCAL_LLM_BASE_URL",
+                            type="warning",
+                            timeout=6000,
+                        )
+                    else:
+                        ui.notify(f"Error: {resp.text}", type="negative")
+                    return
+
+                payload = {"query": question, "top_k": int(top_k.value)}
+                if valid_as_of.value:
+                    payload["valid_as_of"] = valid_as_of.value
                 resp = await client.post(
                     "http://localhost:8000/query",
                     json=payload,
@@ -906,7 +965,12 @@ def _query_page():
                 else:
                     ui.notify(f"Error: {resp.text}", type="negative")
 
-        ui.button("Search", on_click=do_query).classes("bg-blue-500 text-white")
+        with ui.row().classes("gap-2"):
+            ui.button("Search", on_click=do_query).classes("bg-blue-500 text-white")
+            ui.button(
+                "New chat",
+                on_click=lambda: session.update({"id": None}),
+            ).classes("bg-gray-200 text-gray-700")
 
 
 def _digest_page():

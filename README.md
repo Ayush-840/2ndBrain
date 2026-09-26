@@ -90,6 +90,11 @@ curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
   -d '{"query": "What is bi-temporal modeling?"}'
 
+# Grounded answer with privacy-tiered model routing (06 §3)
+curl -X POST http://localhost:8000/query/answer \
+  -H "Content-Type: application/json" \
+  -d '{"question": "what is my rent and when does the lease end?"}'
+
 # Point-in-time graph query
 curl -X POST http://localhost:8000/graph/query-as-of \
   -H "Content-Type: application/json" \
@@ -224,6 +229,7 @@ Facts are clustered by embedding similarity into topic groups, each with an LLM-
 | POST | `/ingest/file` | Ingest an uploaded file |
 | POST | `/ingest/url` | Ingest a URL/browser clip |
 | POST | `/query` | Hybrid search (dense + BM25 + graph) |
+| POST | `/query/answer` | Cited answer: retrieve → route by sensitivity → synthesize (session memory) |
 | POST | `/graph/query-as-of` | Facts valid as of a date |
 | POST | `/graph/entity` | Entity neighborhood traversal |
 | POST | `/graph/contradictions` | Find contradictions |
@@ -256,6 +262,12 @@ Facts are clustered by embedding similarity into topic groups, each with an LLM-
 | GET | `/audit-log` | Append-only access log |
 | GET | `/export` | Full data export, zipped |
 
+**Answer routing (06 §3):** evidence tagged `identity`/`medical`/`financial`
+(or a question about an encrypted profile field) is answered by the *local*
+model — it never leaves the machine. Everything else uses the cloud model.
+If the preferred tier isn't configured the response says so explicitly
+(`route.fallback_from`); with zero results no model is called at all.
+
 ## Frontend (NiceGUI)
 
 The NiceGUI frontend is mounted at `/ui` on the FastAPI server. Pages:
@@ -267,7 +279,9 @@ The NiceGUI frontend is mounted at `/ui` on the FastAPI server. Pages:
   with check-ins, timeline, and the contradiction review queue (accept/reject)
 - **Wiki** (`/ui/wiki`) — Browse topic clusters and summaries
 - **Graph** (`/ui/graph`) — Interactive ECharts graph explorer with filters
-- **Query** (`/ui/query`) — Chat-style interface with point-in-time date picker
+- **Query** (`/ui/query`) — Chat-style interface with point-in-time date picker;
+  "AI answer" toggle calls `/query/answer` (cited answer, cloud/local route badge,
+  session memory across follow-ups, "New chat" resets)
 - **Digest** (`/ui/digest`) — Daily/weekly digests, contradiction reports
 
 ## Authentication
@@ -306,7 +320,13 @@ export BRAIN_AUTH_ENABLED=false
 | `BRAIN_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Sentence-transformers model |
 | `BRAIN_CHUNK_SIZE` | `512` | Characters per chunk |
 | `BRAIN_CHUNK_OVERLAP` | `64` | Overlap between adjacent chunks |
-| `BRAIN_ANTHROPIC_API_KEY` | — | Claude API key (extraction) |
+| `BRAIN_ANTHROPIC_API_KEY` | — | Claude API key (extraction + answer generation) |
+| `BRAIN_ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Cloud model for answers/extraction |
+| `BRAIN_LOCAL_LLM_BASE_URL` | — | OpenAI-compatible local tier (e.g. `http://localhost:11434/v1`); unset = no local tier |
+| `BRAIN_LOCAL_LLM_MODEL` | `llama3.1:8b` | Local model name |
+| `BRAIN_SENSITIVE_CATEGORIES` | `identity,medical,financial` | Categories that route answers to the local model |
+| `BRAIN_ANSWER_HISTORY_TURNS` | `8` | Conversation turns kept per session |
+| `BRAIN_ANSWER_SESSION_TTL_SECONDS` | `21600` | Idle expiry for answer sessions |
 | `BRAIN_GRAPH_WEIGHT` | `0.2` | Weight for graph results in RRF fusion |
 | `BRAIN_GRAPH_HOPS` | `2` | Hops to traverse in graph retrieval |
 | `BRAIN_AUTH_ENABLED` | `true` | Enable frontend authentication |
